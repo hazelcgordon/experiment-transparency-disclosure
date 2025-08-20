@@ -1,0 +1,179 @@
+---
+title: "pilot_code"
+author: "Hazel C Gordon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(psych)
+
+```
+
+```{r read data}
+
+pilot <- read.csv("pilot_data.csv")
+
+# slice top 2 rows of redundant info
+
+pilot <- pilot %>%
+  slice(-(1:2))
+
+#add row number identifier
+
+pilot <- pilot %>% 
+  mutate(id = row_number()) %>%
+  select(id, everything())
+
+```
+
+```{r wrangle functions}
+
+convert_numeric <- function(response) {
+  
+  # Trim leading and trailing whitespace and convert to lowercase
+  response_cleaned <- tolower(trimws(response))
+  
+  # Define the mapping with all lowercase keys
+  mapping <- c(
+    "strongly disagree" = 1,
+    "disagree" = 2,
+    "somewhat disagree" = 3,
+    "neither agree nor disagree" = 4,
+    "somewhat agree" = 5,
+    "agree" = 6,
+    "strongly agree" = 7
+  )
+  
+  # Return the mapped value, or NA if the response does not match
+  return(ifelse(!is.na(mapping[response_cleaned]), mapping[response_cleaned], NA))
+  
+  # convert to numeric
+  return(as.numeric(numeric_values))
+}
+
+# Mean-score items
+
+mean_score <- function(data, vars, new_name) {
+  data %>%
+    mutate(
+      !!new_name := rowMeans(across(all_of(vars)), na.rm = TRUE)
+    )
+}
+
+```
+
+
+```{r wrangle}
+
+# extract variables for hypothesis testing
+
+data <- pilot %>%
+  select(id, starts_with("trial"), self_ideology, starts_with("alliance"), starts_with("sdp"), starts_with("policy_"), starts_with("a_"), starts_with("s_"), vote)
+
+# numeric scale
+
+data <- data %>%
+  mutate(across(c(starts_with("policy"), ends_with("proact"), ends_with("look"), ends_with("intent"), 
+                   ends_with("open"), contains("agree")), ~convert_numeric(.x)))
+
+# check reliability for policy items (clustered by party)
+
+alliance_r <- data %>%
+  select(policy_1, policy_2, policy_3)
+
+omega(alliance_r)
+
+sdp_r <- data %>%
+  select(policy_4, policy_5, policy_6)
+
+omega(sdp_r)
+
+#create mean scored for policy items before altering format wide -> long
+
+data <- data%>%
+  mean_score(vars = c("policy_1", "policy_2", "policy_3"), new_name = "alliance_policy") %>%
+  mean_score(vars = c("policy_3", "policy_4", "policy_5"), new_name = "sdp_policy")
+
+```
+
+```{r wide to long}
+
+# repeated measures final column names
+
+r_measures <- c(
+  "skill","princ","emp","know","sinc","kind","comp","truth","warm",
+  "agree1","agree2","proact","look","intent","open","use","compliant",
+  "policy","ideology","support","familiar"
+)
+
+# 1) Make the two-row-per-id trial table 
+trial_long <- data %>%
+  select(id, vote, self_ideology, matches("^trial(1|2)_(party|motive|imprint|label)$")) %>%
+  pivot_longer(
+    cols = matches("^trial(1|2)_(party|motive|imprint|label)$"),
+    names_to = c("trial", ".value"),
+    names_pattern = "^trial(1|2)_(.*)$"
+  ) %>%
+  mutate(
+    trial = as.integer(trial),
+    party = as.integer(party),
+    motive = as.integer(motive),
+    imprint = as.integer(imprint)
+  )
+
+# 2) Prepare party-specific data for alliance (a_/alliance_) and sdp (s_/sdp_)
+
+# Make alliance-by-id by stripping prefixes and adding _A suffix
+alliance_by_id <- data %>%
+  select(id, starts_with("a_"), starts_with("alliance_")) %>%
+  rename_with(~ sub("^a_", "", .x),           starts_with("a_")) %>%
+  rename_with(~ sub("^alliance_", "", .x),    starts_with("alliance_")) %>%
+  # now columns are just measure names; add _A to distinguish later
+  rename_with(~ ifelse(.x == "id", .x, paste0(.x, "_A")))
+
+# Make sdp-by-id with _S suffix
+sdp_by_id <- data %>%
+  select(id, starts_with("s_"), starts_with("sdp_")) %>%
+  rename_with(~ sub("^s_",   "", .x), starts_with("s_")) %>%
+  rename_with(~ sub("^sdp_", "", .x), starts_with("sdp_")) %>%
+  rename_with(~ ifelse(.x == "id", .x, paste0(.x, "_S")))
+
+# 4) Join both party blocks onto the trial table
+long_data <- trial_long %>%
+  left_join(alliance_by_id, by = "id") %>%
+  left_join(sdp_by_id,      by = "id") %>%
+  mutate(
+    !!!set_names(
+      lapply(r_measures, function(m) {
+        a <- sym(paste0(m, "_A"))
+        s <- sym(paste0(m, "_S"))
+        # build an expression that will be evaluated in the data mask
+        expr(if_else(.data$party == 0L, !!a, !!s))
+      }),
+      r_measures
+    )
+  ) %>%
+  select(id, trial, party, motive, imprint, label, all_of(r_measures), vote, self_ideology) %>%
+  arrange(id, trial)
+
+
+```
+
+```{r sanity check}
+
+# sanity checks for party assignment
+
+# Compare alliance skill (arbitrary choice)
+check_alliance <- long_data %>%
+  filter(party == 0) %>% # filter long_data for alliance only
+  select(id, trial, party, skill) %>%
+  left_join(data %>% select(id, a_skill), by = "id") # match responses from the wide data-frame that are for alliance
+
+check_alliance # see if responses match up
+
+```
+
