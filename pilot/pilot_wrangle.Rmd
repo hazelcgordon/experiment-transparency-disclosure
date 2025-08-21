@@ -10,6 +10,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
 library(psych)
+library(lme4)
+library(lmerTest)
+library(mediation)
 
 ```
 
@@ -53,6 +56,31 @@ convert_numeric <- function(response) {
   
   # convert to numeric
   return(as.numeric(numeric_values))
+}
+
+# semantic differentials
+
+strip_to_numeric <- function(x) {
+  # Convert to character, in case factors sneak in
+  x_chr <- as.character(x)
+  
+  # Extract digits in each entry
+  nums <- stringr::str_extract(x_chr, "\\d+")
+  
+  # Convert to numeric, keep NA if nothing matched
+  as.numeric(nums)
+}
+
+# convert to 0, 1 factor
+
+make_factor <- function(data, cols) {
+  data %>%
+    mutate(
+      across(
+        all_of(cols),
+        ~ factor(.x, levels = c("0", "1"))
+      )
+    )
 }
 
 # Mean-score items
@@ -132,7 +160,6 @@ alliance_by_id <- data %>%
   select(id, starts_with("a_"), starts_with("alliance_")) %>%
   rename_with(~ sub("^a_", "", .x),           starts_with("a_")) %>%
   rename_with(~ sub("^alliance_", "", .x),    starts_with("alliance_")) %>%
-  # now columns are just measure names; add _A to distinguish later
   rename_with(~ ifelse(.x == "id", .x, paste0(.x, "_A")))
 
 # Make sdp-by-id with _S suffix
@@ -176,4 +203,142 @@ check_alliance <- long_data %>%
 check_alliance # see if responses match up
 
 ```
+
+```{r final variable transformations}
+
+# semantic differentials
+
+long_data <- long_data %>%
+  mutate(across(
+    c(skill, princ, emp, know, sinc, comp, kind, warm, truth),
+    strip_to_numeric
+  ))
+
+# vote
+
+long_data <- long_data %>%
+  mutate(
+    vote = case_when(
+      vote == "The Alliance Party of Northern Ireland" ~ 0,
+      vote == "The Social Democratic Party (SDP)" ~ 1,
+      TRUE ~ NA_real_
+    )
+  )
+
+# manipulations
+
+long_data <- make_factor(long_data, c("party", "imprint", "motive", "vote"))
+
+# familiarity
+
+long_data <- long_data %>%
+  mutate(
+    familiar = case_when(
+      familiar == "Yes, I have heard of them"      ~ "1",
+      familiar == "No, I do not know who they are" ~ "0",
+      TRUE ~ NA_character_
+    ),
+    familiar = factor(familiar, levels = c("0", "1"))
+  )
+
+# support
+
+long_data <- long_data %>%
+  mutate(
+    support = case_when(
+      support == "Strongly oppose"    ~ 1,
+      support == "Oppose"             ~ 2,
+      support == "Somewhat oppose"    ~ 3,
+      support == "No opinion"         ~ 4,
+      support == "Somewhat support"   ~ 5,
+      support == "Support"            ~ 6,
+      support == "Strongly support"   ~ 7,
+      TRUE ~ NA_real_
+    )
+  )
+
+# create trustworthiness dimensions
+
+long_data <- long_data %>%
+  mean_score(vars = c("skill", "know", "comp"), new_name = "competence") %>%
+  mean_score(vars = c("princ", "sinc", "truth"), new_name = "integrity") %>%
+  mean_score(vars = c("emp", "kind", "warm"), new_name = "benevolence")
+
+```
+
+## Hypothesis testing
+
+```{r decomposing covariates}
+
+
+
+```
+
+H1. Participants informed that a political party engages in intentional information disclosure will report higher perceptions of trustworthiness (across all dimensions) compared to those informed a party only shares what is necessary.
+
+H3. Intentionality will moderate the effect of viewing an advertising disclosure on perceived trustworthiness (across all dimensions), such that a disclosure will increase trustworthiness only when the political party is known to share information intentionally.
+
+```{r H1}
+
+# Basic preregistered model
+m1 <- lmer(competence ~ motive*imprint + party + (1 | id),
+           data = long_data, REML = FALSE)
+
+summary(m1)
+
+```
+
+H4. Intentionality will increase the likelihood of voting for a political party, and this effect will be mediated by perceptions of trustworthiness (all dimensions)
+
+```{r causal mediation}
+
+# 0) Build a common analysis dataset (same rows for both models)
+med.dat <- long_data %>%
+  dplyr::select(id, vote, motive, imprint, party, competence) %>%
+  tidyr::drop_na() %>%                 # ensure identical row set
+  mutate(
+    id      = as.factor(id),           
+    vote    = as.numeric(vote)         # 0/1 numeric for glmer
+  ) %>%
+  mutate(vote = vote - 1)
+
+## 1) Mediator model (random intercept)
+med.fit <- nlme::lme(
+  fixed   = competence ~ motive + imprint + party,
+  random  = ~ 1 | id,
+  data    = med.dat,
+  na.action = na.omit
+)
+
+med.fit <- lmer(
+  competence ~ motive + imprint + party + (1 | id),
+  data = med.dat
+)
+
+# 2) Outcome model as GLM (logit) — no random effect
+out.fit <- glm(
+  vote ~ motive + competence + imprint + party,
+  data   = med.dat,
+  family = binomial("logit")
+)
+
+## 3) Mediation (ACME/ADE/Total; bootstrap CIs recommended)
+med.out <- mediate(
+  model.m   = med.fit,
+  model.y   = out.fit,
+  treat     = "motive",
+  mediator  = "competence",
+  boot      = FALSE,
+  cluster = med.dat$id,
+  sims      = 1000
+)
+
+
+# no cluster within med and out models
+
+med.fit <- lm(competence ~ motive + imprint + party, data = med.dat)
+
+
+```
+
 
