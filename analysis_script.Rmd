@@ -1,8 +1,8 @@
 ---
-title: "Main Analysis"
-author: "Hazel C Gordon"
+title: "Experiment 3: Results"
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+  word_document
 ---
 
 ```{r setup, include=FALSE}
@@ -12,6 +12,8 @@ library(tidyverse)
 library(tidyr)
 library(knitr)
 library(gt)
+library(broom)
+library(emmeans)
 library(psych)
 library(lme4)
 library(lmerTest)
@@ -78,12 +80,10 @@ likert_numeric <- function(response) {
 
 make_factor <- function(data, cols) {
   data %>%
-    mutate(
-      across(
-        all_of(cols),
-        ~ factor(.x, levels = c("0", "1"))
-      )
-    )
+    dplyr::mutate(across(
+      dplyr::all_of(cols),
+      ~ factor(.x, levels = c(0, 1), labels = c("0","1"))
+    ))
 }
 
 # set factor levels for ideology variables
@@ -259,7 +259,18 @@ display_names <- c(
   interest       = "Political interest"
 )
 
-# 1) Prepare columns (rename, parse Percent, keep current row order)
+# set order of presentation
+
+block_order <- c(
+  "Region",
+  "Gender",
+  "Education",
+  "Ethnicity",
+  "Self-identified ideology",
+  "Political interest"
+)
+
+# Prepare columns (rename, parse Percent, keep current row order)
 sample_table2 <- sample_table %>%
   mutate(.row_order = row_number()) %>%                       # preserve within-block order
   rename(Category = Level) %>%
@@ -272,18 +283,7 @@ sample_table2 <- sample_table %>%
   ) %>%
   arrange(Variable_display, .row_order)
 
-# set order of presentation
-
-block_order <- c(
-  "Region",
-  "Gender",
-  "Education",
-  "Ethnicity",
-  "Self-identified ideology",
-  "Political interest"
-)
-
-# 3) Build table
+# Build table
 sample_table2 %>%
   dplyr::select(Variable_display, Category, N, Percent) %>%
   gt(groupname_col = "Variable_display") %>%
@@ -304,41 +304,173 @@ sample_table2 %>%
   ) %>%
   tab_source_note(source_note = "Totals are out of N = 985.")
 
+sample_table2
+
 ```
 
 #### How did the participants perceive the ideology of the political parties? Was this fairly uniform? How did it compare relative to the ideology of the self (collected pre-manipulation)?
 
-```{r echo=FALSE}
+```{r include=FALSE}
 
+ideology_levels <- c(
+  "Strongly left-leaning",
+  "Left-leaning",
+  "Somewhat left-leaning",
+  "Neither left nor right leaning",
+  "Somewhat right-leaning",
+  "Right-leaning",
+  "Strongly right-leaning"
+)
 
+sample <- sample %>%
+  mutate(
+    alliance_ideology = factor(alliance_ideology, levels = ideology_levels, ordered = TRUE),
+    sdp_ideology      = factor(sdp_ideology,      levels = ideology_levels, ordered = TRUE)
+  )
 
 ```
 
 
-```{r wrangle}
+Below shows how the political ideology of both parties were rated by participants. The most common response option for both was 'neither left nor right leaning'.
+
+```{r echo=FALSE}
+
+df_counts <- sample %>%
+  mutate(
+    alliance_ideology = factor(alliance_ideology, levels = ideology_levels, ordered = TRUE),
+    sdp_ideology      = factor(sdp_ideology,      levels = ideology_levels, ordered = TRUE)
+  ) %>%
+  dplyr::select(alliance_ideology, sdp_ideology) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "Variable",
+    values_to = "Category"
+  ) %>%
+  count(Variable, Category, name = "N") %>%
+  tidyr::complete(Variable, Category, fill = list(N = 0))
+
+# create %
+
+df_pct <- df_counts %>%
+  dplyr::group_by(Variable) %>%
+  dplyr::mutate(pct = N / sum(N)) %>%
+  dplyr::ungroup()
+
+# Name 
+
+var_labels <- c(
+  alliance_ideology = "Perceived Alliance ideology",
+  sdp_ideology      = "Perceived SDP ideology"
+)
+
+# colours
+
+var_colors <- c(
+  alliance_ideology = "#C49A00",  # yellow
+  sdp_ideology      = "#800000"   # red
+)
+
+# plot
+
+ggplot(df_pct, aes(x = Category, y = pct, fill = Variable)) +
+  geom_col() +
+  geom_text(aes(label = scales::percent(pct, accuracy = 0.1)), hjust = -0.1, size = 3) +
+  facet_wrap(~ Variable, labeller = as_labeller(var_labels), ncol = 1) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                     expand = expansion(mult = c(0.02, 0.15))) +
+  scale_fill_manual(values = var_colors, guide = "none") +
+  labs(x = NULL, y = "% of respondents") +
+  theme_minimal(base_size = 12)
+
+```
+
+However, perceptions differed between parties (comparison of ordinal distributions: Stuart–Maxwell X2(6)=115.2, p<.001). A paired Wilcoxon test indicated SDP was perceived as more right-wing than Alliance (Hodges–Lehmann shift = +0.5 categories, 95% CI [0.50, 0.50], p < .001). Among non-tied pairs, 60.2% placed SDP to the right of Alliance (p < .001).
+
+```{r alliance sdp distrubutions, include=FALSE}
+
+# Square contingency table of paired ratings (Alliance rows, SDP cols)
+tab_party <- table(sample$alliance_ideology, sample$sdp_ideology)
+
+# Stuart–Maxwell and Bhapkar tests of marginal homogeneity
+library(DescTools)
+StuartMaxwellTest(tab_party)
+BhapkarTest(tab_party)
+
+# check in which direction
+
+a  <- as.integer(sample$alliance_ideology)
+s  <- as.integer(sample$sdp_ideology)
+ok <- complete.cases(a, s)
+d  <- s[ok] - a[ok]   # positive => SDP rated more right-wing
+
+# Descriptives of the paired shift
+table_diff <- table(d)
+prop.table(table_diff)        # proportions of each shift value
+median(d); mean(d)            # median/mean shift in categories
+mean(d > 0); mean(d < 0); mean(d == 0)
+
+# Paired Wilcoxon signed-rank (Hodges–Lehmann shift + CI)
+w_two_sided <- wilcox.test(s[ok], a[ok], paired = TRUE, exact = FALSE, conf.int = TRUE)
+w_greater   <- wilcox.test(s[ok], a[ok], paired = TRUE, exact = FALSE,
+                           conf.int = TRUE, alternative = "greater")  # tests "SDP > Alliance"
+w_two_sided
+w_two_sided$estimate  # HL location shift (in category units)
+w_two_sided$conf.int  # CI for the shift
+
+# Sign test (robust, ignores magnitudes)
+npos <- sum(d > 0); nneg <- sum(d < 0)
+binom.test(npos, npos + nneg, p = 0.5, alternative = "greater")
+
+```
+
+Furthermore, chi-squared tests indicated that there is a correlation between self-identified ideology and the ideology each party was perceived to have. Due to small N in some of the categories in the 7x7 grid, Monte Carlo simulations are used to estimate p-values. A positive and significant association was found for both parties, indicating that participants tended to interpret the ideology of the party in line with their own. For Alliance, the test indicated clear dependence between variables, X2 = 156.56, P <.001.For SDP, the result was similarly significant, x2 = 124.87, p<.001.These results reject independence for both parties, indicating that respondents’ self-placements on the left–right scale are systematically related to how left- or right-wing they perceive the parties to be.
+
+```{r include=FALSE}
+
+# Self vs ALLIANCE
+alliance_association <- table(sample$self_ideology, sample$alliance_ideology)
+
+# Use Monte Carlo p-value (robust when some expected < 5)
+chisq_a_mc <- chisq.test(alliance_association, simulate.p.value = TRUE, B = 50000)
+chisq_a_mc
+
+# Self vs SDP
+sdp_association <- table(sample$self_ideology, sample$sdp_ideology)
+
+# Use Monte Carlo p-value (robust when some expected < 5)
+chisq_s_mc <- chisq.test(sdp_association, simulate.p.value = TRUE, B = 50000)
+chisq_s_mc
+
+```
+
+
+#### How many participants knew of the parties beforehand? For those who knew them, did they tend to be in support or opposition?
+
+
+Not yet looked at.
+
+```{r wrangle, include=FALSE}
 
 # extract variables for hypothesis testing
 
-data <- pilot %>%
-  select(id, starts_with("trial"), self_ideology, starts_with("alliance"), starts_with("sdp"), starts_with("policy_"), starts_with("a_"), starts_with("s_"), vote)
+main <- data %>%
+  dplyr::select(id, starts_with("trial"), self_ideology, starts_with("alliance"), starts_with("sdp"), starts_with("policy_"), starts_with("a_"), starts_with("s_"), vote)
 
 # numeric scale
 
 data <- data %>%
   mutate(across(c(starts_with("policy"), ends_with("proact"), ends_with("look"), ends_with("intent"), 
-                   ends_with("open"), contains("agree")), ~convert_numeric(.x)))
+                   ends_with("open"), contains("agree")), ~likert_numeric(.x)))
 
-# check reliability for policy items (clustered by party)
+# ideology
 
-alliance_r <- data %>%
-  select(policy_1, policy_2, policy_3)
+# set levels for ideology
 
-omega(alliance_r)
-
-sdp_r <- data %>%
-  select(policy_4, policy_5, policy_6)
-
-omega(sdp_r)
+main <- level_ideology(
+  main,
+  vars = c("self_ideology", "alliance_ideology", "sdp_ideology")
+)
 
 #create mean scored for policy items before altering format wide -> long
 
@@ -348,7 +480,26 @@ data <- data%>%
 
 ```
 
-```{r wide to long}
+```{r policy index checking, include=FALSE}
+
+# check reliability for policy items (clustered by party)
+
+alliance_r <- data %>%
+  dplyr::select(policy_1, policy_2, policy_3)
+
+omega(alliance_r)
+
+sdp_r <- data %>%
+  dplyr::select(policy_4, policy_5, policy_6)
+
+omega(sdp_r)
+
+# how did distribution relate to left-right ideology?
+
+
+```
+
+```{r wide to long, include=FALSE}
 
 # repeated measures final column names
 
@@ -359,8 +510,8 @@ r_measures <- c(
 )
 
 # 1) Make the two-row-per-id trial table 
-trial_long <- data %>%
-  select(id, vote, self_ideology, matches("^trial(1|2)_(party|motive|imprint|label)$")) %>%
+trial_long <- main %>%
+  dplyr::select(id, vote, self_ideology, matches("^trial(1|2)_(party|motive|imprint|label)$")) %>%
   pivot_longer(
     cols = matches("^trial(1|2)_(party|motive|imprint|label)$"),
     names_to = c("trial", ".value"),
@@ -377,14 +528,14 @@ trial_long <- data %>%
 
 # Make alliance-by-id by stripping prefixes and adding _A suffix
 alliance_by_id <- data %>%
-  select(id, starts_with("a_"), starts_with("alliance_")) %>%
+  dplyr::select(id, starts_with("a_"), starts_with("alliance_")) %>%
   rename_with(~ sub("^a_", "", .x),           starts_with("a_")) %>%
   rename_with(~ sub("^alliance_", "", .x),    starts_with("alliance_")) %>%
   rename_with(~ ifelse(.x == "id", .x, paste0(.x, "_A")))
 
 # Make sdp-by-id with _S suffix
 sdp_by_id <- data %>%
-  select(id, starts_with("s_"), starts_with("sdp_")) %>%
+  dplyr::select(id, starts_with("s_"), starts_with("sdp_")) %>%
   rename_with(~ sub("^s_",   "", .x), starts_with("s_")) %>%
   rename_with(~ sub("^sdp_", "", .x), starts_with("sdp_")) %>%
   rename_with(~ ifelse(.x == "id", .x, paste0(.x, "_S")))
@@ -404,35 +555,32 @@ long_data <- trial_long %>%
       r_measures
     )
   ) %>%
-  select(id, trial, party, motive, imprint, label, all_of(r_measures), vote, self_ideology) %>%
+  dplyr::select(id, trial, party, motive, imprint, label, all_of(r_measures), vote, self_ideology) %>%
   arrange(id, trial)
 
 
 ```
 
-```{r sanity check}
+```{r sanity check, include=FALSE}
 
 # sanity checks for party assignment
 
 # Compare alliance skill (arbitrary choice)
 check_alliance <- long_data %>%
   filter(party == 0) %>% # filter long_data for alliance only
-  select(id, trial, party, skill) %>%
-  left_join(data %>% select(id, a_skill), by = "id") # match responses from the wide data-frame that are for alliance
+  dplyr::select(id, trial, party, skill) %>%
+  left_join(data %>% dplyr::select(id, a_skill), by = "id") # match responses from the wide data-frame that are for alliance
 
 check_alliance # see if responses match up
 
 ```
 
-```{r final variable transformations}
+```{r final variable transformations, include=FALSE}
 
 # semantic differentials
 
 long_data <- long_data %>%
-  mutate(across(
-    c(skill, princ, emp, know, sinc, comp, kind, warm, truth),
-    strip_to_numeric
-  ))
+  mutate(across(c(skill, princ, emp, know, sinc, comp, kind, warm, truth), as.numeric))
 
 # vote
 
@@ -488,39 +636,493 @@ long_data <- long_data %>%
 
 ### Checking randomisation
 
-#### Were these demographics successfully randomised into conditions?
+#### Was political ideology successfully randomised into conditions?
 
-```{r}
 
-# create new column
+There is no evidence that political ideology was unevenly represented within the experimental conditions, indicating successful randomisation (X2(18) = 10.02, p = .93).
+
+```{r randomised ideology, echo=FALSE}
+
+# create new column retaining only the two experimental conditions
+
+long_data <- long_data %>%
+  mutate(
+    cond = case_match(label,
+                      c("A_F_C", "S_F_C") ~ 1,
+                      c("A_F_D", "S_F_D") ~ 2,
+                      c("A_W_C", "S_W_C") ~ 3,
+                      c("A_W_D", "S_W_D") ~ 4
+    )
+  )
+
+# set factor levels
+
+long_data <- long_data %>%
+  mutate(cond = factor(cond, levels = 1:4,
+                       labels = c("Cond 1","Cond 2","Cond 3","Cond 4")))
+
+# Contingency table + Chi-square (Monte Carlo p-value for sparse cells)
+
+ideology_randomisation <- table(long_data$self_ideology, long_data$cond)
+
+chisq_expected_range <- chisq.test(ideology_randomisation)$expected |> range() 
+
+chisq_mc <- chisq.test(ideology_randomisation, simulate.p.value = TRUE, B = 50000)
+chisq_mc
 
 ```
 
-## Hypothesis testing
+### Descriptive variable distributions
 
-```{r decomposing covariates}
+```{r, echo=FALSE}
 
+outcomes <- c("skill","princ","emp","know","sinc","comp","kind","warm","truth")
 
+# Helper functions: sample skewness and excess kurtosis (standardized moments)
+.skew <- function(x) {
+  x <- x[is.finite(x)]
+  n <- length(x); if (n < 3) return(NA_real_)
+  m <- mean(x); s <- sd(x); if (s == 0) return(0)
+  mean(((x - m)/s)^3)
+}
+.kurt_excess <- function(x) {
+  x <- x[is.finite(x)]
+  n <- length(x); if (n < 4) return(NA_real_)
+  m <- mean(x); s <- sd(x); if (s == 0) return(0)
+  mean(((x - m)/s)^4) - 3
+}
+
+# ---- Overall distribution table with skew & kurtosis ----
+dist_tbl <- long_data %>%
+  summarise(across(
+    all_of(outcomes),
+    list(
+      N        = ~ sum(!is.na(.x)),
+      Mean     = ~ mean(.x, na.rm = TRUE),
+      SD       = ~ sd(.x, na.rm = TRUE),
+      Skewness = ~ .skew(.x),
+      Kurtosis = ~ .kurt_excess(.x),
+      Median   = ~ median(.x, na.rm = TRUE),
+      P25      = ~ quantile(.x, 0.25, na.rm = TRUE),
+      P75      = ~ quantile(.x, 0.75, na.rm = TRUE),
+      Min      = ~ min(.x, na.rm = TRUE),
+      Max      = ~ max(.x, na.rm = TRUE)
+    ),
+    .names = "{.col}__{.fn}"
+  )) %>%
+  pivot_longer(everything(),
+               names_to = c("Variable", ".value"),
+               names_sep = "__") %>%
+  arrange(Variable)
+
+# print
+dist_tbl %>%
+  mutate(Variable = str_to_title(Variable)) %>%
+  gt() %>%
+  cols_label(
+    Variable = "Outcome",
+    N = "N",
+    Mean = "Mean", SD = "SD",
+    Skewness = "Skewness", Kurtosis = "Kurtosis (excess)",
+    Median = "Median",
+    P25 = "25th pct", P75 = "75th pct",
+    Min = "Min", Max = "Max"
+  ) %>%
+  fmt_number(columns = c(Mean, SD, Skewness, Kurtosis, Median, P25, P75, Min, Max),
+             decimals = 2) %>%
+  tab_header(title = "Outcome Distributions (overall)")
+
+dist_tbl
+
+# by condition
+
+dist_by_cond <- long_data %>%
+  group_by(cond) %>%
+  summarise(across(
+    all_of(outcomes),
+    list(
+      N = ~ sum(!is.na(.x)),
+      Mean = ~ mean(.x, na.rm = TRUE),
+      SD = ~ sd(.x, na.rm = TRUE)
+    ),
+    .names = "{.col}__{.fn}"
+  ), .groups = "drop") %>%
+  pivot_longer(-cond, names_to = c("Variable", ".value"), names_sep = "__") %>%
+  arrange(cond, Variable)
+
+dist_by_cond %>%
+  mutate(Variable = str_to_title(Variable)) %>%
+  gt(groupname_col = "cond") %>%
+  cols_label(Variable = "Outcome", N = "N", Mean = "Mean", SD = "SD") %>%
+  fmt_number(columns = c(Mean, SD), decimals = 2) %>%
+  tab_header(title = "Outcome Distributions by Condition")
+
+dist_by_cond
 
 ```
 
-H1. Participants informed that a political party engages in intentional information disclosure will report higher perceptions of trustworthiness (across all dimensions) compared to those informed a party only shares what is necessary.
+### Manipulation checks
 
-H3. Intentionality will moderate the effect of viewing an advertising disclosure on perceived trustworthiness (across all dimensions), such that a disclosure will increase trustworthiness only when the political party is known to share information intentionally.
+
+It was intended that the intentionality (motive) condition increased the perception that the political party shared information openly, while keeping perceptions of legal compliance and information availability constant. This was partially supported. The motive condition indeed increased perceptions that the political party shared information openly, and they were not perceived as being more legally compliant. However, perceptions that the information was available for the public to view were positively impacted by motive.
+
+It was intended that the disclosure condition would not affect the perception that the advertisements were well-designed. This was not supported; the presence of a disclosure increased the perceived professionalism of a post. This effect was statistically significant. The effect of motive (which had nothing to do with the post design) was also positive, suggesting that this measure was confounded by perceptions of trustworthiness, e.g., the more the party was trusted, the more professional their advertisement was rated. Ultimately, this means this alternative theoretical explanation (that a disclosure increases trust through increasing how 'polished' a post looks) could not be ruled out.
+
+*Log odds interpretation:*
+
+*- probability = chance of 'yes' in each condition,*
+
+*- log odds: how many 'yes' for every 'no' in each condition; *
+
+*- odds ratio (multiplicative): comparison of odds across conditions e.g., the increase in odds for 'yes' vs 'no' in condition = 1 compared to condition = 0.* 
+
+```{r, echo=FALSE}
+
+# legal (manipulation check)
+
+long_data <- long_data %>%
+  mutate(
+    compliant = case_when(
+      compliant == "Yes"      ~ "1",
+      compliant == "No" ~ "0",
+      TRUE ~ NA_character_
+    ),
+   compliant = factor(compliant, levels = c("0", "1"))
+  )
+
+# legal (manipulation check)
+
+long_data <- long_data %>%
+  mutate(
+    use = case_when(
+      use == "Yes"      ~ "1",
+      use == "No" ~ "0",
+      TRUE ~ NA_character_
+    ),
+   use = factor(use, levels = c("0", "1"))
+  )
+
+long_data <- long_data %>%
+  mean_score(vars = c("proact", "intent", "open"), new_name = "intention") 
+
+# did the motive condition increase perceptions of intentionality?
+
+man_intent_sim <- lm(intention ~ motive + imprint + party,
+           data = long_data)
+
+man_intent_int <- lm(intention ~ motive*imprint + party,
+           data = long_data)
+
+# did the imprint increase perceptions of well designed ads?
+
+man_look_sim <- lm(look ~ imprint + motive + party,
+           data = long_data)
+
+man_look_int <- lm(look ~ imprint*motive + party,
+           data = long_data)
+
+# compliance with the law
+
+man_compliant_sim <- glm(compliant ~ motive + imprint + party, data = long_data,
+             family = binomial())
+
+man_compliant_int <- glm(compliant ~ motive*imprint + party, data = long_data,
+             family = binomial())
+
+# information availability
+
+man_use_sim <- glm(use ~ motive + imprint + party, data = long_data,
+             family = binomial())
+
+man_use_int <- glm(use ~ motive*imprint + party, data = long_data,
+             family = binomial())
+
+print("do interactions significantly worsen model fit (thus making predictions less reliable)?")
+
+AIC(man_intent_sim, man_intent_int, man_look_sim, man_look_int, man_compliant_sim, man_compliant_int, man_use_sim, man_use_int)
+
+# model fit for intent and use are improved by the addition of an interaction effect
+
+print("check with LRT to see if interaction term meaningful improved model")
+
+anova(man_intent_sim, man_intent_int)
+anova(man_look_sim, man_look_int)
+anova(man_compliant_sim, man_compliant_int)
+anova(man_use_sim, man_use_int)
+
+print("LRT do not support interaction for manipulation checks")
+
+```
+
+```{r manipulation summaries, echo=FALSE}
+
+# Labels for terms
+coef_map <- c(
+  "(Intercept)"      = "Intercept",
+  "motive1"          = "Motive (ref = forced)",
+  "imprint1"         = "Imprint = (ref = control text)",
+  "party1"           = "Party (ref = Alliance)"
+)
+
+
+model_table <- function(model, title = deparse(substitute(model)),
+                        include_intercept = FALSE, ci_level = 0.95,
+                        digits = 2, p_digits = 3) {
+
+  is_glm_binom <- inherits(model, "glm") && family(model)$family == "binomial"
+
+  td <- tidy(model, conf.int = TRUE, conf.level = ci_level,
+             exponentiate = is_glm_binom) %>%
+    mutate(term = recode(term, !!!coef_map)) %>%
+    { if (!include_intercept) filter(., term != "Intercept") else . } %>%
+    transmute(
+      Term       = term,
+      Est        = estimate,
+      SE         = std.error,
+      `Lower CI` = conf.low,
+      `Upper CI` = conf.high,
+      p          = p.value
+    )
+
+  gt(td) %>%
+    tab_header(title = title) %>%
+    cols_label(
+      Est = if (is_glm_binom) "OR" else "Estimate",
+      SE = "SE"
+    ) %>%
+    fmt_number(columns = c(Est, SE, `Lower CI`, `Upper CI`), decimals = digits) %>%
+    fmt_number(columns = p, decimals = p_digits)
+}
+
+print("motive condition manipulation check")
+
+model_table(man_intent_sim, "Openly share information (check for motive)")
+model_table(man_compliant_sim, "Compliant with regulatory law (check for motive)")
+model_table(man_use_sim, "Information availability (check for motive)")
+
+print("disclosure condition manipulation check")
+
+model_table(man_look_sim,   "Well-designed advertisement (check for disclosure)")
+
+```
+
+```{r manipulation check effect sizes, include=FALSE}
+
+# Binary outcome: average marginal effect (pp difference)
+emm_use  <- emmeans(man_use_sim, ~ motive, type = "response")
+diff_pp_use  <- summary(contrast(regrid(emm_use), "revpairwise"))  # difference on prob scale
+
+emm_comp  <- emmeans(man_compliant_sim, ~ motive, type = "response")
+diff_pp_comp  <- summary(contrast(regrid(emm_comp), "revpairwise"))
+
+# Linear outcome: raw mean difference
+emm_intent <- emmeans(man_intent_sim, ~ motive)
+diff_y_intent   <- summary(contrast(emm_intent, "revpairwise"))
+
+emm_look <- emmeans(man_look_sim, ~ imprint)
+diff_y_look   <- summary(contrast(emm_look, "revpairwise"))
+
+diff_pp_use
+diff_pp_comp
+diff_y_intent
+diff_y_look
+
+# ---- 1) CONTINUOUS outcomes: d for intention, look ----
+# Intention
+emm_intent <- emmeans(man_intent_sim, ~ motive)
+con_intent <- summary(contrast(emm_intent, "revpairwise"), infer = c(TRUE, TRUE))
+sigma_intent <- sigma(man_intent_sim)
+
+d_intent <- tibble(
+  Outcome   = "Intention",
+  Diff      = con_intent$estimate,
+  L         = con_intent$lower.CL,
+  U         = con_intent$upper.CL,
+  ES_type   = "Cohen's d",
+  ES        = con_intent$estimate / sigma_intent,
+  ES_L      = con_intent$lower.CL / sigma_intent,
+  ES_U      = con_intent$upper.CL / sigma_intent
+)
+
+# Well-designed (look)
+emm_look <- emmeans(man_look_sim, ~ imprint)
+con_look <- summary(contrast(emm_look, "revpairwise"), infer = c(TRUE, TRUE))
+sigma_look <- sigma(man_look_sim)
+
+d_look <- tibble(
+  Outcome   = "Well-designed",
+  Diff      = con_look$estimate,
+  L         = con_look$lower.CL,
+  U         = con_look$upper.CL,
+  ES_type   = "Cohen's d",
+  ES        = con_look$estimate / sigma_look,
+  ES_L      = con_look$lower.CL / sigma_look,
+  ES_U      = con_look$upper.CL / sigma_look
+)
+
+# ---- 2) BINARY outcomes: h for use, compliance ----
+# Helper: get p0 (motive=0) and p1 (motive=1)
+get_probs <- function(fit) {
+  pe <- as.data.frame(emmeans(fit, ~ motive, type = "response"))
+  # ensure motive=0 first
+  pe <- pe[order(pe$motive), ]
+  list(p0 = pe$prob[1], p1 = pe$prob[2])
+}
+cohens_h <- function(p1, p0) 2*asin(sqrt(p1)) - 2*asin(sqrt(p0))
+
+# Information availability
+pr_use <- get_probs(man_use_sim)
+use_diff <- summary(contrast(regrid(emmeans(man_use_sim, ~ motive, type = "response")),
+                             "revpairwise"), infer = c(TRUE, TRUE))
+
+h_use <- tibble(
+  Outcome   = "Information availability",
+  Diff      = use_diff$estimate,     # probability difference (pp = Diff*100)
+  L         = use_diff$lower.CL,
+  U         = use_diff$upper.CL,
+  ES_type   = "Cohen's h",
+  ES        = cohens_h(pr_use$p1, pr_use$p0)
+) %>%
+  mutate(ES_L = NA_real_, ES_U = NA_real_)  # CI for h optional; requires delta method
+
+# Compliance
+pr_comp <- get_probs(man_compliant_sim)
+comp_diff <- summary(contrast(regrid(emmeans(man_compliant_sim, ~ motive, type = "response")),
+                              "revpairwise"), infer = c(TRUE, TRUE))
+
+h_comp <- tibble(
+  Outcome   = "Compliance",
+  Diff      = comp_diff$estimate,
+  L         = comp_diff$lower.CL,
+  U         = comp_diff$upper.CL,
+  ES_type   = "Cohen's h",
+  ES        = cohens_h(pr_comp$p1, pr_comp$p0)
+) %>%
+  mutate(ES_L = NA_real_, ES_U = NA_real_)
+
+# ---- 3) Combine & print ----
+tab <- bind_rows(d_intent, d_look, h_use, h_comp) %>%
+  mutate(
+    `Diff (CI)` = ifelse(grepl("Cohen's d", ES_type),
+                         sprintf("%.3f (%.3f, %.3f)", Diff, L, U),
+                         sprintf("%.3f (%.3f, %.3f)", Diff, L, U)),
+    `Std ES`    = ifelse(grepl("Cohen's d", ES_type),
+                         sprintf("d = %.2f (%.2f, %.2f)", ES, ES_L, ES_U),
+                         sprintf("h = %.2f", ES))
+  ) %>%
+  dplyr::select(Outcome, `Diff (CI)`, ES_type, `Std ES`)
+
+gt(tab) %>%
+  tab_header(title = "Motive effect across outcomes") %>%
+  cols_label(`Diff (CI)` = "Difference (95% CI)",
+             ES_type = "Effect size type",
+             `Std ES` = "Standardized effect")
+
+```
+
+
+```{r, include=FALSE}
+
+# ambiguity around the professionalism 
+
+terms <- c("motive1","imprint1","party1") 
+
+look_fdr <- tidy(man_look_sim) |>
+  dplyr::filter(term %in% terms) |>
+  dplyr::mutate(
+    q_BH = p.adjust(p.value, method = "BH"),   # Benjamini–Hochberg FDR
+    q_BY = p.adjust(p.value, method = "BY")    # Benjamini–Yekutieli (more conservative)
+  )
+
+look_fdr
+
+# TOST for the effect of imprint
+
+cf  <- coef(summary(man_look_sim))["imprint1", ]
+est <- unname(cf["Estimate"])
+se  <- unname(cf["Std. Error"])
+df  <- df.residual(man_look_sim)
+
+sig <- sigma(man_look_sim)
+est_d <- est / sig
+se_d  <- se  / sig
+
+delta_d <- 0.10  # SESOI in Cohen's d
+
+# 90% CI for d
+t95 <- qt(0.95, df)
+ci90_d <- c(est_d - t95*se_d, est_d + t95*se_d)
+
+# TOST p-value in d units (declare equivalence if p_TOST < .05)
+t1 <- (est_d - (-delta_d)) / se_d
+t2 <- (delta_d - est_d) / se_d
+p1 <- pt(t1, df, lower.tail = FALSE)
+p2 <- pt(t2, df, lower.tail = FALSE)
+p_TOST <- max(p1, p2)
+
+list(d = est_d, CI90_d = ci90_d, p_TOST = p_TOST,
+     equivalent = (ci90_d[1] > -delta_d & ci90_d[2] < delta_d))
+
+```
+
+### Hypothesis testing
+
+
 
 ```{r H1}
 
-# Basic preregistered model
-m1 <- lmer(competence ~ motive*imprint + party + (1 | id),
+# Basic preregistered model looking at the effect of intentionality (or 'motive')
+
+motive_c <- lmer(competence ~ motive + imprint + party + (1|id),
            data = long_data, REML = FALSE)
 
-summary(m1)
+motive_i <- lmer(integrity ~ motive + imprint + party + (1|id),
+           data = long_data, REML = FALSE)
+
+motive_b <- lmer(benevolence ~ motive + imprint + party + (1|id),
+           data = long_data, REML = FALSE)
+
+# interaction
+
+int_c <- lmer(competence ~ motive*imprint + party + (1|id),
+           data = long_data, REML = FALSE)
+
+int_i <- lmer(integrity ~ motive*imprint + party + (1|id),
+           data = long_data, REML = FALSE)
+
+int_b <- lmer(benevolence ~ motive*imprint + party + (1|id),
+           data = long_data, REML = FALSE)
+
+summary(int_b)
+
+# visualise
+
+# Get EMMs + 95% CI for each cell of the 2x2
+emm_df <- confint(emmeans(int_i, ~ motive * imprint)) %>% as.data.frame()
+
+ggplot(emm_df, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
+  geom_line(position = position_dodge(width = 0.15)) +
+  geom_point(position = position_dodge(width = 0.15)) +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL),
+                width = 0.08, position = position_dodge(width = 0.15)) +
+  labs(x = "Motive", y = "Estimated mean integrity", color = "Imprint") +
+  ylim(1, 10) +
+  theme_minimal(base_size = 12) 
+
+# Simple effects of motive at each level of imprint
+pairs(emmeans(int_i, ~ motive | imprint))
+
+# DID contrast (motive effect difference across imprint)
+# Cell order must match factor level order: (motive1,imprint1), (motive2,imprint1), (motive1,imprint2), (motive2,imprint2)
+emm <- emmeans(int_i, ~ motive * imprint)
+contrast(emm, method = list(DID = c(1, -1, -1, 1)))
+
 
 ```
 
-H4. Intentionality will increase the likelihood of voting for a political party, and this effect will be mediated by perceptions of trustworthiness (all dimensions)
 
-```{r causal mediation}
+
+```{r causal mediation, eval=FALSE}
 
 # 0) Build a common analysis dataset (same rows for both models)
 med.dat <- long_data %>%
