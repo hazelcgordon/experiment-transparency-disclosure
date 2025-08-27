@@ -9,6 +9,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
+library(tidyr)
+library(knitr)
+library(gt)
 library(psych)
 library(lme4)
 library(lmerTest)
@@ -44,7 +47,7 @@ data <- data %>%
 
 ```
 
-```{r wrangle functions, include=FALSE}
+```{r create functions, include=FALSE}
 
 # converting classic likert scale to numeric 
 
@@ -83,15 +86,6 @@ make_factor <- function(data, cols) {
     )
 }
 
-# Mean-score items
-
-mean_score <- function(data, vars, new_name) {
-  data %>%
-    mutate(
-      !!new_name := rowMeans(across(all_of(vars)), na.rm = TRUE)
-    )
-}
-
 # set factor levels for ideology variables
 
 level_ideology <- function(data, vars) {
@@ -112,6 +106,58 @@ level_ideology <- function(data, vars) {
     ))
 }
 
+# set factor levels for individual categorical variables
+
+# Convert multiple character vars to factors with specified level orders
+# - levels_map: named list with all pre-specific vectors
+# - ordered_cols: character vector of column names that should be ordered factors
+# - append_unknown: if TRUE, unseen values in the data are appended to the end of levels
+# - warn_unknown: if TRUE, warn about unseen values
+set_factor_levels <- function(data, levels_map, ordered_cols = character(),
+                              append_unknown = TRUE, warn_unknown = TRUE) {
+
+  stopifnot(is.list(levels_map), !is.null(names(levels_map)))
+  cols <- intersect(names(levels_map), names(data))
+  if (length(cols) == 0) return(data)
+
+  data %>%
+    mutate(across(all_of(cols), ~ {
+      lvls <- levels_map[[cur_column()]]
+      x <- .x
+
+      # Handle values not in the provided levels
+      if (append_unknown) {
+        miss <- setdiff(unique(x), lvls)
+        if (warn_unknown && length(miss) > 0) {
+          warning(sprintf(
+            "Column '%s': appending %d unknown level(s): %s",
+            cur_column(), length(miss), paste(miss, collapse = ", ")
+          ))
+        }
+        lvls <- c(lvls, setdiff(miss, lvls))
+      } else {
+        miss <- setdiff(unique(x), lvls)
+        if (warn_unknown && length(miss) > 0) {
+          warning(sprintf(
+            "Column '%s': %d value(s) not in provided levels will become NA: %s",
+            cur_column(), length(miss), paste(miss, collapse = ", ")
+          ))
+        }
+      }
+
+      factor(x, levels = lvls, ordered = cur_column() %in% ordered_cols)
+    }))
+}
+
+# Mean-score items
+
+mean_score <- function(data, vars, new_name) {
+  data %>%
+    mutate(
+      !!new_name := rowMeans(across(all_of(vars)), na.rm = TRUE)
+    )
+}
+
 ```
 
 ### Sample
@@ -130,7 +176,7 @@ sample <- level_ideology(
   vars = c("self_ideology", "alliance_ideology", "sdp_ideology")
 )
 
-# set levels for all other variables
+# set mapping levels for all other variables
 
 region <- c("England", "Scotland", "Wales", "Northern Ireland")
 education <- c("No formal qualifications", "O levels/GCSEs or equivalent", "A levels or equivalent", "Foundation degree or equivalent", "Undergraduate degree or equivalent", "Postgraduate degree (e.g., Masters, PhD) or equivalent", "Other, please describe")
@@ -138,26 +184,135 @@ gender <- c("Female", "Male", "Non-binary / third gender", "Prefer not to say")
 ethnicity <- c("White", "Asian", "Black", "Mixed/Multiple ethnic groups", "Arab", "Other, please describe", "Prefer not to say")
 interest <- c("Not at all interested", "Somewhat interested", "Interested", "Very interested")
 
+# create list to be inputted to function
+
+levels_map <- list(
+  region = region,
+  education = education,
+  gender = gender,
+  ethnicity = ethnicity,
+  interest = interest
+)
+
+# apply previously created function
+
+sample <- set_factor_levels(
+  sample,
+  levels_map = levels_map,
+  ordered_cols = c("education", "interest", "self_ideology"),
+  append_unknown = TRUE,   
+  warn_unknown = TRUE
+)
+
+# Check correct application
+lapply(sample[names(levels_map)], levels)
+
 # age to numeric
 
 sample$age <- as.numeric(sample$age)
+summary(sample$age)
 
 ```
 
 #### What was the demographic breakdown of the sample?
 
-```{r table, echo=FALSE}
+```{r table, include=FALSE}
+
+# function to create demographic breakdown table
+demographic_table <- function(data, vars, total_n) {
+  bind_rows(lapply(vars, function(v) {
+    data %>%
+      count(!!sym(v), name = "N") %>%
+      mutate(
+        Variable = v,
+        Level = as.character(!!sym(v)),
+        Percent = round(100 * N / total_n, 1)
+      ) %>%
+      dplyr::select(Variable, Level, N, Percent)
+  })) %>%
+    arrange(match(Variable, vars)) %>%
+    mutate(
+      Percent = paste0(Percent, "%")
+    )
+}
+
+# specify variables in the order you want them
+vars <- c("region", "gender", "education", "ethnicity", "self_ideology", "interest")
+
+# create table
+sample_table <- demographic_table(sample, vars, total_n = 985)
+
+# pretty print
+kable(sample_table, align = c("l","l","r","r"),
+      col.names = c("Variable", "Category", "N", "%"))
+
+```
+
+```{r echo=FALSE}
+
+display_names <- c(
+  region         = "Region",
+  gender         = "Gender",
+  education      = "Education",
+  ethnicity      = "Ethnicity",
+  self_ideology  = "Self-identified ideology",
+  interest       = "Political interest"
+)
+
+# 1) Prepare columns (rename, parse Percent, keep current row order)
+sample_table2 <- sample_table %>%
+  mutate(.row_order = row_number()) %>%                       # preserve within-block order
+  rename(Category = Level) %>%
+  mutate(
+    Percent = as.numeric(gsub("%", "", Percent)) / 100        # "45.4%" -> 0.454
+  ) %>%
+  mutate(
+    Variable_display = recode(Variable, !!!display_names),    # <-- creates Variable_display
+    Variable_display = factor(Variable_display, levels = block_order)
+  ) %>%
+  arrange(Variable_display, .row_order)
+
+# set order of presentation
+
+block_order <- c(
+  "Region",
+  "Gender",
+  "Education",
+  "Ethnicity",
+  "Self-identified ideology",
+  "Political interest"
+)
+
+# 3) Build table
+sample_table2 %>%
+  dplyr::select(Variable_display, Category, N, Percent) %>%
+  gt(groupname_col = "Variable_display") %>%
+  cols_label(
+    Category = "Category",
+    N        = "N",
+    Percent  = "% of sample"
+  ) %>%
+  fmt_number(columns = N, decimals = 0) %>%
+  fmt_percent(columns = Percent, decimals = 1) %>%
+  tab_options(
+    table.font.size = px(13),
+    data_row.padding = px(4)
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_source_note(source_note = "Totals are out of N = 985.")
+
+```
+
+#### How did the participants perceive the ideology of the political parties? Was this fairly uniform? How did it compare relative to the ideology of the self (collected pre-manipulation)?
+
+```{r echo=FALSE}
 
 
 
 ```
-
-#### Were these demographics successfully randomised into conditions?
-
-
-
-#### How did the participants perceive the ideology of the political parties? Was this fairly uniform? How did it compare relative to the ideology of the self (collected pre-manipulation)?
-
 
 
 ```{r wrangle}
@@ -328,6 +483,16 @@ long_data <- long_data %>%
   mean_score(vars = c("skill", "know", "comp"), new_name = "competence") %>%
   mean_score(vars = c("princ", "sinc", "truth"), new_name = "integrity") %>%
   mean_score(vars = c("emp", "kind", "warm"), new_name = "benevolence")
+
+```
+
+### Checking randomisation
+
+#### Were these demographics successfully randomised into conditions?
+
+```{r}
+
+# create new column
 
 ```
 
