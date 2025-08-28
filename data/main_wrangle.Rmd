@@ -251,6 +251,30 @@ long_data <- long_data %>%
     )
   )
 
+# legal (manipulation check)
+
+long_data <- long_data %>%
+  mutate(
+    compliant = case_when(
+      compliant == "Yes"      ~ "1",
+      compliant == "No" ~ "0",
+      TRUE ~ NA_character_
+    ),
+   compliant = factor(compliant, levels = c("0", "1"))
+  )
+
+# legal (manipulation check)
+
+long_data <- long_data %>%
+  mutate(
+    use = case_when(
+      use == "Yes"      ~ "1",
+      use == "No" ~ "0",
+      TRUE ~ NA_character_
+    ),
+   use = factor(use, levels = c("0", "1"))
+  )
+
 # create trustworthiness dimensions and manipulation check
 
 long_data <- long_data %>%
@@ -258,6 +282,12 @@ long_data <- long_data %>%
   mean_score(vars = c("princ", "sinc", "truth"), new_name = "integrity") %>%
   mean_score(vars = c("emp", "kind", "warm"), new_name = "benevolence") %>%
   mean_score(vars = c("proact", "intent", "open"), new_name = "intention") 
+
+```
+
+```{r reset environment}
+
+rm(list = setdiff(ls(envir = .GlobalEnv), c("long_data", "data")), envir = .GlobalEnv)
 
 ```
 

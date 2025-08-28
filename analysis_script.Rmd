@@ -636,10 +636,15 @@ long_data <- long_data %>%
 
 ### Checking randomisation
 
-#### Was political ideology successfully randomised into conditions?
+#### Was political ideology, pre-existing knowledge of party, and pre-existing party support successfully randomised into conditions?
 
+Monte Carlo simulations were used to handle sparse cells. Degrees of freedom worked out with a contingency table formula: df=(R−1)×(C−1).
 
 There is no evidence that political ideology was unevenly represented within the experimental conditions, indicating successful randomisation (X2(18) = 10.02, p = .93).
+
+On the whole, participants were more likely to have heard of SDP than they had of Alliance, but this trend was consistent across conditions. A participant was no more likely to be placed in each of the four experimental conditions with a party that they knew, than one they did not know (X2(3) = 0.86, p = 0.83).
+
+Levels of pre-existing support for the political party were also evenly represented across conditions (X2(18) = 16.93, p = 0.53).
 
 ```{r randomised ideology, echo=FALSE}
 
@@ -665,10 +670,43 @@ long_data <- long_data %>%
 
 ideology_randomisation <- table(long_data$self_ideology, long_data$cond)
 
-chisq_expected_range <- chisq.test(ideology_randomisation)$expected |> range() 
+chisq_id <- chisq.test(ideology_randomisation, simulate.p.value = TRUE, B = 50000)
+chisq_id
 
-chisq_mc <- chisq.test(ideology_randomisation, simulate.p.value = TRUE, B = 50000)
-chisq_mc
+# checking pre-existing knowledge (familiar)
+
+familiar_randomisation <- table(long_data$familiar, long_data$cond)
+
+chisq_fam <- chisq.test(familiar_randomisation, simulate.p.value = TRUE, B = 50000)
+chisq_fam
+
+# checking pre-existing support
+
+long_data <- long_data %>%
+  mutate(
+    support_r = support
+  )
+
+long_data$support_r <- as.factor(long_data$support_r)
+
+support_randomisation <- table(long_data$support_r, long_data$cond)
+
+chisq_sup <- chisq.test(support_randomisation, simulate.p.value = TRUE, B = 50000)
+chisq_sup
+
+```
+
+```{r, include=FALSE}
+
+# 8 cells
+addmargins(table(long_data$label))
+
+# 2×2 grid collapsed across party
+lab_parts <- do.call(rbind, strsplit(long_data$label, "_"))
+addmargins(table(motive = lab_parts[,2], imprint = lab_parts[,3]))
+
+# Familiar × label
+addmargins(table(Familiar = long_data$familiar, Label = long_data$label))
 
 ```
 
@@ -764,7 +802,7 @@ dist_by_cond
 ### Manipulation checks
 
 
-It was intended that the intentionality (motive) condition increased the perception that the political party shared information openly, while keeping perceptions of legal compliance and information availability constant. This was partially supported. The motive condition indeed increased perceptions that the political party shared information openly, and they were not perceived as being more legally compliant. However, perceptions that the information was available for the public to view were positively impacted by motive.
+It was intended that the intentionality (motive) condition increased the perception that the political party shared information openly, while keeping perceptions of legal compliance and information availability constant. This was partially supported. The motive condition indeed increased perceptions that the political party shared information openly (see tables below), and they were not perceived as being more legally compliant. However, perceptions that the information was available for the public to view were positively impacted by motive.
 
 It was intended that the disclosure condition would not affect the perception that the advertisements were well-designed. This was not supported; the presence of a disclosure increased the perceived professionalism of a post. This effect was statistically significant. The effect of motive (which had nothing to do with the post design) was also positive, suggesting that this measure was confounded by perceptions of trustworthiness, e.g., the more the party was trusted, the more professional their advertisement was rated. Ultimately, this means this alternative theoretical explanation (that a disclosure increases trust through increasing how 'polished' a post looks) could not be ruled out.
 
@@ -1067,9 +1105,45 @@ list(d = est_d, CI90_d = ci90_d, p_TOST = p_TOST,
 
 ### Hypothesis testing
 
+Below shows the pre-registered hypotheses, which specified a single hypothesis for every planned statistical test.H1 and H2 are the same three tests, and are included separately to demonstrate competing theoretical predictions. 
 
+*"Due to competing theoretical claims, it is currently unclear which dimensions of trustworthiness will be impacted by different exposure levels of intentionality (see document 'theoretical_framing' for clarification of concepts).*
 
-```{r H1}
+*Hypothesis 1, primary (benevolence and integrity impacted, but not competence)*
+
+- H1a. Participants informed that a political party engages in intentional information disclosure will report higher perceptions of integrity compared to those informed a party only shares what is necessary.
+- H1b: Participants informed that a political party engages in intentional information disclosure will report higher perceptions of benevolence compared to those informed a party only shares what is necessary.
+- H1c: There will be no effect of intentionality on perceptions of competence.
+
+*Hypothesis 2, alternative (competence impacted, but not benevolence and integrity)*
+
+- H2a. Participants informed that a political party engages in intentional information disclosure will report higher perceptions of competence compared to those informed a party only shares what is necessary.
+- H2b: There will be no effect of intentionality on perceptions of integrity.
+- H2c: There will be no effect of intentionality on perceptions of benevolence.
+
+*For hypotheses that predict no effect, these will be tested against a smallest effect size of interest (SESOI), which is outlined in the analysis plan. Statistical equivalence will be tested against this SESOI using a two one-sided test (TOST). If equivalence is supported, this will be interpreted as evidence for the null; if not, non-significant results will be treated as absence of evidence.*
+
+*The hypotheses below will be tested. It is recognised they may be partially contingent on the outcomes of the above stated tests.*
+
+*Hypothesis 3*
+
+- H3a. Intentionality will moderate the effect of viewing an advertising disclosure on perceived trustworthiness, such that a disclosure will increase competence only when the political party is known to share information intentionally.
+- H3b. Intentionality will moderate the effect of viewing an advertising disclosure on perceived trustworthiness, such that a disclosure will increase integrity only when the political party is known to share information intentionally.
+- H3c. Intentionality will moderate the effect of viewing an advertising disclosure on perceived benevolence, such that a disclosure will increase benevolence only when the political party is known to share information intentionally.
+
+*Hypothesis 4*
+
+H4a. Intentionality will increase the likelihood of voting for a political party, and this effect will be mediated by perceptions of competence.
+H4b. Intentionality will increase the likelihood of voting for a political party, and this effect will be mediated by perceptions of integrity.
+H4c. Intentionality will increase the likelihood of voting for a political party, and this effect will be mediated by perceptions of benevolence."
+
+### Testing H1-H3
+
+Summary
+
+Do interaction terms improve model fit?
+
+```{r H1 and H2}
 
 # Basic preregistered model looking at the effect of intentionality (or 'motive')
 
