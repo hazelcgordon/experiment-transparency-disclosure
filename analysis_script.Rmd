@@ -1348,6 +1348,402 @@ contrast(emm, method = list(DID = c(1, -1, -1, 1)))
 
 #### Assumptions 
 
+```{r competence assumption checking}
+
+library(performance)
+library(see)
+
+check_model(cov_b)
+
+# Standardise (Pearson) residuals & fitteds
+res <- resid(cov_c, type = "pearson")
+fit <- fitted(cov_c)
+
+par(mfrow=c(1,2))
+plot(fit, res, xlab="Fitted", ylab="Std. residuals"); abline(h=0, lty=2)
+qqnorm(res); qqline(res)
+par(mfrow=c(1,1))
+
+# 2) Robust SEs clustered by id (guard against heteroskedasticity)
+library(clubSandwich)
+clubSandwich::coef_test(cov_c, vcov = "CR2", cluster = long_data$id)
+
+```
+
+```{r cooks manual, eval=FALSE, include=FALSE}
+
+## Influence at the cluster level
+infl <- influence(cov_c, group = "id")
+cd   <- cooks.distance(infl)      # length = G clusters
+db   <- dfbetas(infl)  # G x P matrix (clusters x coefficients) 
+
+## n = number of clusters (participants)
+G <- length(cd)
+
+## Manual cutoffs
+cut_dfbetas <- 2 / sqrt(G)
+cut_cookd   <- 4 / G
+
+# cut_dfbetas; cut_cookd
+
+## Flags
+flag_cd_idx      <- which(cd > cut_cookd)
+flag_db_any_idx  <- which(apply(abs(db), 1, function(x) any(x > cut_dfbetas, na.rm = TRUE)))
+
+## Map indices -> actual id labels used inside the model
+id_levels <- levels(getME(cov_c, "flist")$id)
+flag_cd_ids     <- id_levels[flag_cd_idx]
+flag_dfbetas_ids<- id_levels[flag_db_any_idx]
+
+length(flag_cd_ids); length(flag_dfbetas_ids)
+flag_cd_ids[1:min(10, length(flag_cd_ids))]           # peek
+flag_dfbetas_ids[1:min(10, length(flag_dfbetas_ids))] # peek
+
+## (Optional) which coefficients are triggering DFBETAS?
+# list cluster indices per coefficient that exceed the cutoff
+flag_by_coef <- lapply(seq_len(ncol(db)), function(j) which(abs(db[, j]) > cut_dfbetas))
+names(flag_by_coef) <- colnames(db)
+flag_by_coef  # inspect per-term flags
+
+## Summary table (one row per id)
+summary_infl <- tibble(
+  id              = id_levels,
+  cooksD          = as.numeric(cd),
+  max_abs_dfbetas = apply(abs(db), 1, max, na.rm = TRUE),
+  cd_flag         = cooksD > cut_cookd,
+  dfbetas_flag    = max_abs_dfbetas > cut_dfbetas
+) %>%
+  arrange(desc(cooksD))
+
+head(summary_infl, 12)
+
+# visreg
+
+library(visreg)
+
+visreg(cov_c, "policy",  partial=TRUE)
+visreg(cov_c, "support", partial=TRUE)
+visreg(cov_c, "self_ideology", partial=TRUE)
+
+```
+
+```{r sensitivity check cooks, include=FALSE}
+
+# cooks' D from your fitted model
+infl_c <- influence(cov_c, group = "id")
+cd   <- cooks.distance(infl_c)
+thr  <- 4/length(cd)                 # heuristic threshold
+sum(cd > thr)                        # 53
+
+# visual plot
+
+plot(cd, type = "h", xlab = "Index (id)", ylab = "Cook's distance",
+     main = "Cook's D by participant")
+abline(h = thr, col = "red", lty = 2, lwd = 2)
+
+# --- Get the grouping levels used INSIDE the model ---
+grp_levels <- levels(getME(cov_c, "flist")$id)  # lme4’s internal id labels
+flag_ids   <- grp_levels[ which(cd > thr) ]     # character vector of the 53 ids
+length(flag_ids)      
+
+# filter out of data
+
+sensitivity_df <- long_data %>%
+  mutate(id_chr = as.character(id)) %>%         # compare as characters to be safe
+  filter(!(id_chr %in% flag_ids)) %>%
+  dplyr::select(-id_chr)
+
+# sanity checks
+
+length(unique(long_data$id))         # 985
+length(unique(sensitivity_df$id))   # 932 (if 53 got removed)
+nrow(long_data) - nrow(sensitivity_df)  # ~ 2*53 if 2 rows per id
+
+# refit sensitivity model
+
+m_drop <- update(cov_c, data = sensitivity_df)
+
+# exclude only 616 
+
+idx_max <- which.max(cd)
+levs    <- levels(getME(cov_c, "flist")$id)  # model's id labels
+bad_id  <- levs[idx_max]
+
+sensitivity_df <- long_data %>%
+  mutate(id_chr = as.character(id)) %>%
+  filter(id_chr != bad_id) %>%
+  dplyr::select(-id_chr)
+
+cov_c_drop1 <- update(cov_c, data = sensitivity_df)
+
+summary(cov_c_drop1)
+
+```
+
+#### Integrity assumptions
+
+```{r competence assumption checking}
+
+library(performance)
+library(see)
+
+check_model(cov_i)
+
+# Standardise (Pearson) residuals & fitteds
+res <- resid(cov_i, type = "pearson")
+fit <- fitted(cov_i)
+
+par(mfrow=c(1,2))
+plot(fit, res, xlab="Fitted", ylab="Std. residuals"); abline(h=0, lty=2)
+qqnorm(res); qqline(res)
+par(mfrow=c(1,1))
+
+# 2) Robust SEs clustered by id (guard against heteroskedasticity)
+library(clubSandwich)
+clubSandwich::coef_test(cov_i, vcov = "CR2", cluster = long_data$id)
+
+```
+
+```{r cooks manual, eval=FALSE, include=FALSE}
+
+## Influence at the cluster level
+infl_i <- influence(cov_i, group = "id")
+cd   <- cooks.distance(infl_i)      # length = G clusters
+db   <- dfbetas(infl_i)  # G x P matrix (clusters x coefficients) 
+
+## n = number of clusters (participants)
+G <- length(cd)
+
+## Manual cutoffs
+cut_dfbetas <- 2 / sqrt(G)
+cut_cookd   <- 4 / G
+
+# cut_dfbetas; cut_cookd
+
+## Flags
+flag_cd_idx      <- which(cd > cut_cookd)
+flag_db_any_idx  <- which(apply(abs(db), 1, function(x) any(x > cut_dfbetas, na.rm = TRUE)))
+
+## Map indices -> actual id labels used inside the model
+id_levels <- levels(getME(cov_i, "flist")$id)
+flag_cd_ids     <- id_levels[flag_cd_idx]
+flag_dfbetas_ids<- id_levels[flag_db_any_idx]
+
+length(flag_cd_ids); length(flag_dfbetas_ids)
+flag_cd_ids[1:min(10, length(flag_cd_ids))]           # peek
+flag_dfbetas_ids[1:min(10, length(flag_dfbetas_ids))] # peek
+
+## (Optional) which coefficients are triggering DFBETAS?
+# list cluster indices per coefficient that exceed the cutoff
+flag_by_coef <- lapply(seq_len(ncol(db)), function(j) which(abs(db[, j]) > cut_dfbetas))
+names(flag_by_coef) <- colnames(db)
+flag_by_coef  # inspect per-term flags
+
+## Summary table (one row per id)
+summary_infl <- tibble(
+  id              = id_levels,
+  cooksD          = as.numeric(cd),
+  max_abs_dfbetas = apply(abs(db), 1, max, na.rm = TRUE),
+  cd_flag         = cooksD > cut_cookd,
+  dfbetas_flag    = max_abs_dfbetas > cut_dfbetas
+) %>%
+  arrange(desc(cooksD))
+
+head(summary_infl, 12)
+
+# visreg
+
+library(visreg)
+
+visreg(cov_c, "policy",  partial=TRUE)
+visreg(cov_c, "support", partial=TRUE)
+visreg(cov_c, "self_ideology", partial=TRUE)
+
+```
+
+```{r sensitivity check cooks, include=FALSE}
+
+# cooks' D from your fitted model
+cd   <- cooks.distance(infl_i)
+thr  <- 4/length(cd)                 # heuristic threshold
+sum(cd > thr)                        # 48
+
+# visual plot
+
+plot(cd, type = "h", xlab = "Index (id)", ylab = "Cook's distance",
+     main = "Cook's D by participant")
+abline(h = thr, col = "red", lty = 2, lwd = 2)
+
+# --- Get the grouping levels used INSIDE the model ---
+grp_levels <- levels(getME(cov_i, "flist")$id)  # lme4’s internal id labels
+flag_ids   <- grp_levels[ which(cd > thr) ]     # character vector of the 48 ids
+length(flag_ids)      
+
+# filter out of data
+
+sensitivity_df <- long_data %>%
+  mutate(id_chr = as.character(id)) %>%         # compare as characters to be safe
+  filter(!(id_chr %in% flag_ids)) %>%
+  dplyr::select(-id_chr)
+
+# sanity checks
+
+length(unique(long_data$id))         # 985
+length(unique(sensitivity_df$id))   # 937 (if 48 got removed)
+nrow(long_data) - nrow(sensitivity_df)  # ~ 2*48 if 2 rows per id
+
+# refit sensitivity model
+
+int_drop <- update(cov_i, data = sensitivity_df)
+
+performance::check_model(int_drop)
+
+# FDR check
+
+int_sens_fdr <- tidy(int_drop) |>
+  dplyr::filter(term %in% terms) |>
+  dplyr::mutate(
+    q_BH = p.adjust(p.value, method = "BH"),   # Benjamini–Hochberg FDR
+  )
+
+int_sens_fdr
+
+# exclude only top leverage points
+
+```
+
+#### Benevolence assumptions
+
+```{r competence assumption checking}
+
+library(performance)
+library(see)
+
+check_model(cov_b)
+
+# Standardise (Pearson) residuals & fitteds
+res <- resid(cov_b, type = "pearson")
+fit <- fitted(cov_b)
+
+par(mfrow=c(1,2))
+plot(fit, res, xlab="Fitted", ylab="Std. residuals"); abline(h=0, lty=2)
+qqnorm(res); qqline(res)
+par(mfrow=c(1,1))
+
+# 2) Robust SEs clustered by id (guard against heteroskedasticity)
+library(clubSandwich)
+clubSandwich::coef_test(cov_b, vcov = "CR2", cluster = long_data$id)
+
+```
+
+```{r cooks manual, eval=FALSE, include=FALSE}
+
+## Influence at the cluster level
+infl_b <- influence(cov_b, group = "id")
+cd   <- cooks.distance(infl_b)      # length = G clusters
+db   <- dfbetas(infl_b)  # G x P matrix (clusters x coefficients) 
+
+## n = number of clusters (participants)
+G <- length(cd)
+
+## Manual cutoffs
+cut_dfbetas <- 2 / sqrt(G)
+cut_cookd   <- 4 / G
+
+# cut_dfbetas; cut_cookd
+
+## Flags
+flag_cd_idx      <- which(cd > cut_cookd)
+flag_db_any_idx  <- which(apply(abs(db), 1, function(x) any(x > cut_dfbetas, na.rm = TRUE)))
+
+## Map indices -> actual id labels used inside the model
+id_levels <- levels(getME(cov_b, "flist")$id)
+flag_cd_ids     <- id_levels[flag_cd_idx]
+flag_dfbetas_ids<- id_levels[flag_db_any_idx]
+
+length(flag_cd_ids); length(flag_dfbetas_ids)
+flag_cd_ids[1:min(10, length(flag_cd_ids))]           # peek
+flag_dfbetas_ids[1:min(10, length(flag_dfbetas_ids))] # peek
+
+## (Optional) which coefficients are triggering DFBETAS?
+# list cluster indices per coefficient that exceed the cutoff
+flag_by_coef <- lapply(seq_len(ncol(db)), function(j) which(abs(db[, j]) > cut_dfbetas))
+names(flag_by_coef) <- colnames(db)
+flag_by_coef  # inspect per-term flags
+
+## Summary table (one row per id)
+summary_infl <- tibble(
+  id              = id_levels,
+  cooksD          = as.numeric(cd),
+  max_abs_dfbetas = apply(abs(db), 1, max, na.rm = TRUE),
+  cd_flag         = cooksD > cut_cookd,
+  dfbetas_flag    = max_abs_dfbetas > cut_dfbetas
+) %>%
+  arrange(desc(cooksD))
+
+head(summary_infl, 12)
+
+# visreg
+
+library(visreg)
+
+visreg(cov_c, "policy",  partial=TRUE)
+visreg(cov_c, "support", partial=TRUE)
+visreg(cov_c, "self_ideology", partial=TRUE)
+
+```
+
+```{r sensitivity check cooks, include=FALSE}
+
+# cooks' D from your fitted model
+cd   <- cooks.distance(infl_b)
+thr  <- 4/length(cd)                 # heuristic threshold
+sum(cd > thr)                        # 45
+
+# visual plot
+
+plot(cd, type = "h", xlab = "Index (id)", ylab = "Cook's distance",
+     main = "Cook's D by participant")
+abline(h = thr, col = "red", lty = 2, lwd = 2)
+
+# --- Get the grouping levels used INSIDE the model ---
+grp_levels <- levels(getME(cov_b, "flist")$id)  # lme4’s internal id labels
+flag_ids   <- grp_levels[ which(cd > thr) ]     # character vector of the 45 ids
+length(flag_ids)      
+
+# filter out of data
+
+sensitivity_df <- long_data %>%
+  mutate(id_chr = as.character(id)) %>%         # compare as characters to be safe
+  filter(!(id_chr %in% flag_ids)) %>%
+  dplyr::select(-id_chr)
+
+# sanity checks
+
+length(unique(long_data$id))         # 985
+length(unique(sensitivity_df$id))   # 940 (if 45 got removed)
+nrow(long_data) - nrow(sensitivity_df)  # ~ 2*45 if 2 rows per id
+
+# refit sensitivity model
+
+ben_drop <- update(cov_b, data = sensitivity_df)
+summary(ben_drop)
+
+# FDR check
+
+int_sens_fdr <- tidy(int_drop) |>
+  dplyr::filter(term %in% terms) |>
+  dplyr::mutate(
+    q_BH = p.adjust(p.value, method = "BH"),   # Benjamini–Hochberg FDR
+  )
+
+int_sens_fdr
+
+# exclude only top leverage points
+
+```
+
+### Causal mediation
 
 ```{r causal mediation, eval=FALSE}
 
