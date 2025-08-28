@@ -1143,6 +1143,8 @@ Summary
 
 Do interaction terms improve model fit?
 
+Do model assumptions hold?
+
 ```{r H1 and H2}
 
 # Basic preregistered model looking at the effect of intentionality (or 'motive')
@@ -1156,6 +1158,13 @@ motive_i <- lmer(integrity ~ motive + imprint + party + (1|id),
 motive_b <- lmer(benevolence ~ motive + imprint + party + (1|id),
            data = long_data, REML = FALSE)
 
+# confidence intervals
+
+library(broom.mixed)
+broom.mixed::tidy(motive_c, effects = "fixed", conf.int = TRUE)
+broom.mixed::tidy(motive_i, effects = "fixed", conf.int = TRUE)
+broom.mixed::tidy(motive_b, effects = "fixed", conf.int = TRUE)
+
 # interaction
 
 int_c <- lmer(competence ~ motive*imprint + party + (1|id),
@@ -1167,12 +1176,156 @@ int_i <- lmer(integrity ~ motive*imprint + party + (1|id),
 int_b <- lmer(benevolence ~ motive*imprint + party + (1|id),
            data = long_data, REML = FALSE)
 
-summary(int_b)
+broom.mixed::tidy(int_c, effects = "fixed", conf.int = TRUE)
+broom.mixed::tidy(int_i, effects = "fixed", conf.int = TRUE)
+broom.mixed::tidy(int_b, effects = "fixed", conf.int = TRUE)
+
+```
+
+```{r interactions and model fit, eval=FALSE}
+
+mixed(
+  competence ~ motive * imprint + party + (1 | id),
+  data   = long_data,
+  method = "LRT",                              # likelihood-ratio tests
+  control = lme4::lmerControl(optimizer = "bobyqa")
+)
+
+mixed(
+  integrity ~ motive * imprint + party + (1 | id),
+  data   = long_data,
+  method = "LRT",                              # likelihood-ratio tests
+  control = lme4::lmerControl(optimizer = "bobyqa")
+)
+
+```
+
+
+```{r FDR robustness checks, include=FALSE}
+
+terms <- c("motive1","imprint1","party1", "motive1:imprint1") 
+
+integrity_fdr <- tidy(cov_i) |>
+  dplyr::filter(term %in% terms) |>
+  dplyr::mutate(
+    q_BH = p.adjust(p.value, method = "BH"),   # Benjamini–Hochberg FDR
+  )
+
+integrity_fdr
+
+ben_fdr <- tidy(int_b) |>
+  dplyr::filter(term %in% terms) |>
+  dplyr::mutate(
+    q_BH = p.adjust(p.value, method = "BH"),   # Benjamini–Hochberg FDR
+  )
+
+ben_fdr
+
+# minumum detectable effect at N
+
+summ <- summary(int_i) 
+b  <- coef(summ)["motive1:imprint1","Estimate"]
+se <- coef(summ)["motive1:imprint1","Std. Error"]
+df <- summ$coefficients["motive1:imprint1","df"] %||% df.residual(int_i)
+tcrit <- qt(0.975, df)
+mdes <- tcrit * se
+c(estimate = b, MDES = mdes, ratio = abs(b)/mdes)  # ratio >> 1 is reassuring
+
+```
+
+```{r models with covariates}
+
+# self_ideology to numeric
+
+long_data <- long_data %>%
+  mutate(self_ideology = case_when(
+    self_ideology == "Strongly left-leaning"          ~ 1,
+    self_ideology == "Left-leaning"                   ~ 2,
+    self_ideology == "Somewhat left-leaning"          ~ 3,
+    self_ideology == "Neither left nor right leaning" ~ 4,
+    self_ideology == "Somewhat right-leaning"         ~ 5,
+    self_ideology == "Right-leaning"                  ~ 6,
+    self_ideology == "Strongly right-leaning"         ~ 7,
+    TRUE                                              ~ NA_integer_)
+  )
+
+# covariate models (no decomposition)
+
+cov_c <- lmer(competence ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
+           data = long_data, REML = FALSE)
+
+cov_i <- lmer(integrity ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
+           data = long_data, REML = FALSE)
+
+cov_b <- lmer(benevolence ~ motive*imprint + party + + policy + familiar + support + self_ideology + (1|id),
+           data = long_data, REML = FALSE)
+
+# check for multi-collinearity
+
+car::vif(cov_c)
+
+# model estimates
+
+broom.mixed::tidy(cov_c, effects = "fixed", conf.int = TRUE)
+broom.mixed::tidy(cov_i, effects = "fixed", conf.int = TRUE)
+broom.mixed::tidy(cov_b, effects = "fixed", conf.int = TRUE)
+
+```
+
+```{r decomposed covariates, include=FALSE}
+
+# covariate models (decomposed to within and between for policy and support)
+
+long_data <- long_data %>%
+  mutate(familiar_num = as.numeric(as.character(familiar)))
+
+# between-person (person/grand mean centred), averages the mean for each persons two scores
+
+long_data <- long_data %>%
+  group_by(id) %>%
+  mutate(support_b = mean(support, na.rm = TRUE)) %>%
+  ungroup()
+
+long_data <- long_data %>%
+  group_by(id) %>%
+  mutate(policy_b = mean(policy, na.rm = TRUE)) %>%
+  ungroup()
+
+long_data <- long_data %>%
+  group_by(id) %>%
+  mutate(familiar_b = mean(familiar_num, na.rm = TRUE)) %>%
+  ungroup()
+
+# within person, takes away the averaged mean for each individual score
+
+long_data <- long_data %>%
+  mutate(support_w = support - support_b)
+
+long_data <- long_data %>%
+  mutate(policy_w = policy - policy_b)
+
+long_data <- long_data %>%
+  mutate(familiar_w = familiar_num - familiar_b)
+
+# models
+
+dcov_c <- lmer(competence ~ motive*imprint + party + policy_b + policy_w + + familiar_b + familiar_w + support_b + support_w + self_ideology + (1|id),
+           data = long_data, REML = FALSE)
+
+dcov_i <- lmer(integrity ~ motive*imprint + party + policy_b + policy_w + familiar_b + familiar_w + support_b + support_w + self_ideology + (1|id),
+           data = long_data, REML = FALSE)
+
+dcov_b <- lmer(benevolence ~ motive*imprint + party + policy_b + policy_w + + familiar_b + familiar_w + support_b + support_w + self_ideology + (1|id),
+           data = long_data, REML = FALSE)
+
+```
+
+```{r visualise interactions}
 
 # visualise
 
 # Get EMMs + 95% CI for each cell of the 2x2
-emm_df <- confint(emmeans(int_i, ~ motive * imprint)) %>% as.data.frame()
+emm_df <- confint(emmeans(cov_i, ~ motive * imprint)) %>% as.data.frame()
 
 ggplot(emm_df, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
   geom_line(position = position_dodge(width = 0.15)) +
@@ -1180,20 +1333,20 @@ ggplot(emm_df, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
   geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL),
                 width = 0.08, position = position_dodge(width = 0.15)) +
   labs(x = "Motive", y = "Estimated mean integrity", color = "Imprint") +
-  ylim(1, 10) +
   theme_minimal(base_size = 12) 
 
 # Simple effects of motive at each level of imprint
-pairs(emmeans(int_i, ~ motive | imprint))
+pairs(emmeans(cov_i, ~ imprint|motive))
 
 # DID contrast (motive effect difference across imprint)
 # Cell order must match factor level order: (motive1,imprint1), (motive2,imprint1), (motive1,imprint2), (motive2,imprint2)
-emm <- emmeans(int_i, ~ motive * imprint)
+emm <- emmeans(cov_i, ~ imprint*motive)
 contrast(emm, method = list(DID = c(1, -1, -1, 1)))
 
 
 ```
 
+#### Assumptions 
 
 
 ```{r causal mediation, eval=FALSE}
