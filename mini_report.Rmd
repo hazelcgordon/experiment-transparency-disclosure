@@ -1,0 +1,379 @@
+---
+title: "Mini Report EC"
+author: "Hazel C Gordon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This document words from 'data' after exclusions have been applied.
+
+```{r}
+
+library(ggplot2)
+
+df <- as.data.frame(table(data$law))
+colnames(df) <- c("Response", "Count")
+
+# calculate percentages
+df$Percentage <- df$Count / sum(df$Count) * 100
+
+law <- ggplot(df, aes(x = Response, y = Percentage, fill = Response)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")),  
+            vjust = -0.5, size = 4) +
+  labs(title = "Have you heard of the 'Digital Imprints Regime'?",
+       x = "", y = "Percentage") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  coord_cartesian(ylim = c(0, 100)) +     # <- use this OR the scale_... limits above
+  scale_y_continuous(labels = scales::comma) +
+  scale_fill_brewer(palette = "Set2")
+
+ggsave("figures/law_change.png",
+       plot = law,
+       width = 8.27, height = 5.7, units = "in",
+       dpi = 300, bg = "white")
+
+```
+
+## Normative, cognitive and affective perceptions of imprints
+
+```{r}
+
+likert_numeric <- function(response) {
+  # handle factors
+  if (is.factor(response)) response <- as.character(response)
+
+  # trim / lowercase
+  response_cleaned <- tolower(trimws(response))
+
+  # mapping
+  mapping <- c(
+    "strongly disagree" = 1,
+    "disagree" = 2,
+    "somewhat disagree" = 3,
+    "neither agree nor disagree" = 4,
+    "somewhat agree" = 5,
+    "agree" = 6,
+    "strongly agree" = 7
+  )
+
+  # vectorised lookup (returns NA for non-matches or NA inputs)
+  out <- unname(mapping[response_cleaned])
+  as.numeric(out)
+}
+
+# numeric scale
+
+data <- data %>%
+  mutate(
+    across(
+      ends_with(c("_norm", "_use", "_trust")),
+      likert_numeric
+    )
+  )
+
+# plot as a distribution
+
+long <- data %>%
+  dplyr::select(imprint_norm, imprint_use, imprint_trust,
+             donation_norm, donation_use, donation_trust) %>%
+  pivot_longer(
+    cols = c(imprint_norm, imprint_use, imprint_trust,
+             donation_norm, donation_use, donation_trust),
+    names_to = c("topic", "type"),
+    names_pattern = "(imprint|donation)_(norm|use|trust)",
+    values_to = "score"
+  ) %>%
+  mutate(
+    topic = recode(topic,
+                   imprint  = "Digital imprints",
+                   donation = "Campaign finance"),
+    type = factor(type,
+                  levels = c("norm", "use", "trust"),
+                  labels = c("Importance", "Usefulness", "Reassurance")),
+    score = as.numeric(score)
+  ) %>%
+  filter(!is.na(score))
+
+p_violin <- ggplot(long, aes(x = topic, y = score, fill = topic)) +
+  geom_violin(trim = FALSE, width = 0.85, alpha = 0.7, color = NA) +
+  stat_summary(fun = median, geom = "point", size = 2.2) +
+  facet_wrap(~ type, nrow = 1) +
+  scale_y_continuous(breaks = 1:7, limits = c(1, 7),
+                     expand = expansion(mult = c(0.02, 0.04))) +
+  labs(
+    title = "Distributions of Likert Responses (1–7)",
+    x = NULL, y = "Response (1–7)", fill = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top",
+        panel.grid.minor = element_blank()) +
+  scale_fill_brewer(palette = "Set2")
+
+p_violin
+
+```
+
+```{r}
+
+# 1) Put Digital imprints on the LEFT, Campaign finance on the RIGHT
+long <- long %>%
+  mutate(
+    topic = factor(topic, levels = c("Digital imprints", "Campaign finance"))
+  )
+
+# 2) Violin: smoother shape with higher `adjust` (e.g., 1.6–2.2 for Likert)
+p_violin <- ggplot(long, aes(x = topic, y = score, fill = topic)) +
+  geom_violin(
+    trim = TRUE,
+    adjust = 2.0,     # ↑ makes the density smoother (less wavy)
+    width = 0.85,
+    alpha = 0.7,
+    color = NA
+  ) +
+  stat_summary(fun = median, geom = "point", size = 2.2) +
+  facet_wrap(~ type, nrow = 1) +
+  scale_y_continuous(breaks = 1:7, expand = expansion(mult = c(0.02, 0.04))) +
+  coord_cartesian(ylim = c(1, 7)) +  # clip to Likert range without warnings
+  labs(
+    title = "Distributions of Likert Responses (1–7)",
+    x = NULL, y = "Response (1–7)", fill = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top",
+        panel.grid.minor = element_blank()) +
+  scale_fill_brewer(palette = "Set2")
+
+p_violin
+
+```
+
+```{r}
+
+p_box <- ggplot(long, aes(x = topic, y = score, fill = topic)) +
+  geom_boxplot(
+    width = 0.55,
+    linewidth = 0.5,          # thin, crisp outlines
+    fatten = 1.2,             # slightly thicker median line
+    outlier.shape = 21,       # hollow circles for outliers
+    outlier.size = 1.6,
+    outlier.stroke = 0.4,
+    outlier.fill = "white"
+  ) +
+  # mean marker (small white dot with outline)
+  stat_summary(
+    fun = mean, geom = "point",
+    shape = 21, size = 2.2, stroke = 0.6,
+    fill = "white", color = "black"
+  ) +
+  facet_wrap(~ type, nrow = 1) +
+  scale_y_continuous(
+    breaks = 1:7,
+    limits = c(1, 7),
+    expand = expansion(mult = c(0.02, 0.06))
+  ) +
+  labs(
+    title = "",
+    x = NULL, y = "Distribution", fill = NULL
+  ) +
+  # colorblind-safe Okabe–Ito palette
+  scale_fill_manual(values = c(
+    "Digital imprints"  = "#0072B2",  # blue
+    "Campaign finance"  = "#E69F00"   # orange
+  )) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    axis.title.y = element_text(margin = margin(r = 6)),
+    axis.text.x = element_text(margin = margin(t = 4))
+  )
+
+p_box
+
+```
+
+```{r}
+
+p_box_sleek <- ggplot(long, aes(x = topic, y = score, fill = topic)) +
+  geom_boxplot(
+    width = 0.55,
+    color = NA,             # remove the outline/border
+    alpha = 0.7,            # softer, semi-transparent fill
+    outlier.shape = 21,     # hollow outliers
+    outlier.size = 1.8,
+    outlier.stroke = 0.3,
+    outlier.fill = "white"
+  ) +
+  stat_summary(
+    fun = median, geom = "crossbar",
+    width = 0.5, fatten = 1.2,
+    color = "black", linewidth = 0.4   # thin, subtle median line
+  ) +
+  facet_wrap(~ type, nrow = 1) +
+  scale_y_continuous(
+    breaks = 1:7, limits = c(1, 7),
+    expand = expansion(mult = c(0.02, 0.06))
+  ) +
+  labs(
+    title = "Distributions of Likert Responses (1–7)",
+    x = NULL, y = "Response (1–7)", fill = NULL
+  ) +
+  scale_fill_manual(values = c(
+    "Digital imprints"  = "navy",  # soft blue
+    "Campaign finance"  = "sienna2"   # soft yellow
+  )) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold")
+  )
+
+p_box_sleek
+
+```
+
+```{r}
+
+p_box_points <- ggplot(long, aes(x = topic, y = score, fill = topic)) +
+  # jittered points for all responses (show distribution)
+  geom_jitter(
+    aes(color = topic),
+    width = 0.15, alpha = 0.25, size = 1.5
+  ) +
+  facet_wrap(~ type, nrow = 1) +
+  scale_y_continuous(
+    breaks = 1:7, limits = c(1, 7),
+    expand = expansion(mult = c(0.02, 0.06))
+  ) +
+  labs(
+    title = "",
+    x = NULL, y = "Distribution", fill = NULL, color = NULL
+  ) +
+  # consistent, professional colors
+  scale_color_manual(values = c(
+    "Digital imprints"  = "navy",
+    "Campaign finance"  = "sienna3"
+  )) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold")
+  )
+
+
+p_box_points
+
+```
+
+```{r}
+
+# custom colours
+navy_hex  <- "#1F3A93"   # navy
+dorg_hex  <- "#D35400"   # dark orange
+
+p_violin_wiggly <- ggplot(long, aes(x = topic, y = score, fill = topic)) +
+  geom_violin(
+    trim   = FALSE,   # keep full tails
+    adjust = 1.2,     # < 1 gives more “wiggly” detail
+    width  = 0.85,
+    alpha  = 0.7,
+    color  = NA       # no hard outline
+  ) +
+  # median line for reference (thin, unobtrusive)
+  stat_summary(fun = median, geom = "crossbar",
+               width = 0.5, fatten = 1, linewidth = 0.35, color = "black") +
+  facet_wrap(~ type, nrow = 1) +
+  scale_y_continuous(
+    breaks = 1:7,
+    expand = expansion(mult = c(0.02, 0.04))
+  ) +
+  coord_cartesian(ylim = c(1, 7)) +  # show full Likert range without warnings
+  labs(
+    title = "",
+    x = NULL, y = "Distribution", fill = NULL
+  ) +
+  scale_fill_manual(values = c(
+    "Digital imprints" = navy_hex,
+    "Campaign finance" = dorg_hex
+  )) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold")
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+p_violin_wiggly
+
+# save to PNG, white background
+ggsave("figures/violin_likert.png", 
+       plot = p_violin_wiggly, 
+       width = 8.27, height = 5.7, units = "in", 
+       dpi = 300, 
+       bg = "white")
+
+```
+
+## Text response
+
+```{r}
+
+text_df <- data %>%
+  dplyr::select(purpose) %>%
+  filter(!is.na(purpose))
+
+words <- text_df %>%
+  tidytext::unnest_tokens(word, purpose)
+
+data("stop_words")  # built-in
+custom_stop <- c("library", "save", "promoted", "paid", "promoting", "provide", "promotes", "promote")
+words_clean <- words %>%
+  anti_join(stop_words, by = "word") %>%    # remove common stop words
+  filter(!word %in% custom_stop)  
+
+word_counts <- words_clean %>%
+  count(word, sort = TRUE)
+
+head(word_counts, 20)   # top 20 words
+
+words <- word_counts %>%
+  slice_max(n, n = 30) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Most Frequent Words in Free Text Responses",
+       x = "Word", y = "Frequency") +
+  theme_minimal(base_size = 14)
+
+ggsave("figures/top_words.png", plot = words,
+       width = 8.27, height = 5.7, units = "in", 
+       dpi = 300, 
+       bg = "white")
+
+words
+
+```
+
+```{r}
+
+write.csv(text_df, "data/text_response.csv")
+
+```
+
+
