@@ -474,7 +474,7 @@ main <- level_ideology(
 
 #create mean scored for policy items before altering format wide -> long
 
-data <- data%>%
+data <- data %>%
   mean_score(vars = c("policy_1", "policy_2", "policy_3"), new_name = "alliance_policy") %>%
   mean_score(vars = c("policy_3", "policy_4", "policy_5"), new_name = "sdp_policy")
 
@@ -486,7 +486,6 @@ data <- data%>%
 
 alliance_r <- data %>%
   dplyr::select(policy_1, policy_2, policy_3)
-
 omega(alliance_r)
 
 sdp_r <- data %>%
@@ -495,6 +494,16 @@ sdp_r <- data %>%
 omega(sdp_r)
 
 # how did distribution relate to left-right ideology?
+
+# create a graph with the ideology as categorical along the x-axis, level of policy support up the y-axis, and split by the two policy categories 
+
+
+ggplot(data = data, aes(self_ideology, policy_6)) +
+  geom_boxplot()
+
+# these indicate that the public don't really think in a comparative sense
+# about policy priorities. 
+
 
 
 ```
@@ -638,14 +647,6 @@ long_data <- long_data %>%
 
 #### Was political ideology, pre-existing knowledge of party, and pre-existing party support successfully randomised into conditions?
 
-Monte Carlo simulations were used to handle sparse cells. Degrees of freedom worked out with a contingency table formula: df=(R−1)×(C−1).
-
-There is no evidence that political ideology was unevenly represented within the experimental conditions, indicating successful randomisation (X2(18) = 10.02, p = .93).
-
-On the whole, participants were more likely to have heard of SDP than they had of Alliance, but this trend was consistent across conditions. A participant was no more likely to be placed in each of the four experimental conditions with a party that they knew, than one they did not know (X2(3) = 0.86, p = 0.83).
-
-Levels of pre-existing support for the political party were also evenly represented across conditions (X2(18) = 16.93, p = 0.53).
-
 ```{r randomised ideology, echo=FALSE}
 
 # create new column retaining only the two experimental conditions
@@ -666,12 +667,17 @@ long_data <- long_data %>%
   mutate(cond = factor(cond, levels = 1:4,
                        labels = c("Cond 1","Cond 2","Cond 3","Cond 4")))
 
-# Contingency table + Chi-square (Monte Carlo p-value for sparse cells)
+# numeric
 
-ideology_randomisation <- table(long_data$self_ideology, long_data$cond)
+long_data$support_r <- as.numeric(long_data$support)
 
-chisq_id <- chisq.test(ideology_randomisation, simulate.p.value = TRUE, B = 50000)
-chisq_id
+# checking numerical covariates with an omnibus f-test
+
+anova(lm(policy ~ cond, data = long_data))
+
+anova(lm(self_ideology ~ cond, data = long_data))
+
+anova(lm(support ~ cond, data = long_data))
 
 # checking pre-existing knowledge (familiar)
 
@@ -682,17 +688,7 @@ chisq_fam
 
 # checking pre-existing support
 
-long_data <- long_data %>%
-  mutate(
-    support_r = support
-  )
-
-long_data$support_r <- as.factor(long_data$support_r)
-
-support_randomisation <- table(long_data$support_r, long_data$cond)
-
-chisq_sup <- chisq.test(support_randomisation, simulate.p.value = TRUE, B = 50000)
-chisq_sup
+summary(lm(support ~ cond, data = long_data))
 
 ```
 
@@ -716,7 +712,7 @@ addmargins(table(Familiar = long_data$familiar, Label = long_data$label))
 
 outcomes <- c("skill","princ","emp","know","sinc","comp","kind","warm","truth")
 
-# Helper functions: sample skewness and excess kurtosis (standardized moments)
+# sample skewness and excess kurtosis (standardised moments)
 .skew <- function(x) {
   x <- x[is.finite(x)]
   n <- length(x); if (n < 3) return(NA_real_)
@@ -799,8 +795,30 @@ dist_by_cond
 
 ```
 
-### Manipulation checks
+### Scale reliability
 
+```{r}
+
+# Trustworthiness (all 9 items)
+trust_items <- long_data[, c("skill","princ","emp","know","sinc","comp","kind","warm","truth")]
+
+# Competence
+comp_items <- long_data[, c("skill", "know", "comp")]
+
+# Integrity
+int_items <- long_data[, c("princ", "sinc", "truth")]
+
+# Benevolence
+ben_items <- long_data[, c("emp", "kind", "warm")]
+
+omega(trust_items)  # overall trustworthiness
+omega(comp_items)   # competence
+omega(int_items)    # integrity
+omega(ben_items)    # benevolence
+
+```
+
+### Manipulation checks
 
 It was intended that the intentionality (motive) condition increased the perception that the political party shared information openly, while keeping perceptions of legal compliance and information availability constant. This was partially supported. The motive condition indeed increased perceptions that the political party shared information openly (see tables below), and they were not perceived as being more legally compliant. However, perceptions that the information was available for the public to view were positively impacted by motive.
 
@@ -853,7 +871,7 @@ man_intent_int <- lm(intention ~ motive*imprint + party,
 
 # did the imprint increase perceptions of well designed ads?
 
-man_look_sim <- lm(look ~ imprint + motive + party,
+man_look_sim <- lm(look ~ imprint + motive + party + support,
            data = long_data)
 
 man_look_int <- lm(look ~ imprint*motive + party,
@@ -1257,8 +1275,15 @@ cov_c <- lmer(competence ~ motive*imprint + party + policy + familiar + support 
 cov_i <- lmer(integrity ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
            data = long_data, REML = FALSE)
 
-cov_b <- lmer(benevolence ~ motive*imprint + party + + policy + familiar + support + self_ideology + (1|id),
+cov_b <- lmer(benevolence ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
            data = long_data, REML = FALSE)
+
+# HC3 robust standard errors adjustments
+
+sjPlot::tab_model(cov_c, 
+          vcov.fun = "CR3",
+          vcov.args = list(cluster = long_data$id),
+          show.se = TRUE)
 
 # check for multi-collinearity
 
@@ -1271,6 +1296,8 @@ broom.mixed::tidy(cov_i, effects = "fixed", conf.int = TRUE)
 broom.mixed::tidy(cov_b, effects = "fixed", conf.int = TRUE)
 
 ```
+
+### De-composed covariates
 
 ```{r decomposed covariates, include=FALSE}
 
@@ -1346,6 +1373,73 @@ contrast(emm, method = list(DID = c(1, -1, -1, 1)))
 
 ```
 
+## Robust models
+
+```{r}
+
+## Robust mixed model (M-estimation)
+# competence
+comp_r <- robustlmm::rlmer(
+  competence ~ motive*imprint + party + (1 | id), data = long_data)
+
+cov_c_r <- robustlmm::rlmer(
+  competence ~ motive*imprint + party + policy + familiar + support + self_ideology +
+    (1 | id),
+  data = long_data)
+
+# integrity
+int_r <- robustlmm::rlmer(
+  integrity ~ motive*imprint + party + (1 | id), data = long_data)
+
+cov_i_r <- robustlmm::rlmer(
+  integrity ~ motive*imprint + party + policy + familiar + support + self_ideology +
+    (1 | id),
+  data = long_data)
+
+# benevolence
+
+ben_r <- robustlmm::rlmer(
+  benevolence ~ motive*imprint + party + (1 | id), data = long_data)
+
+cov_b_r <- robustlmm::rlmer(
+  benevolence ~ motive*imprint + party + policy + familiar + support + self_ideology +
+    (1 | id),
+  data = long_data)
+
+# table
+
+sjPlot::tab_model(cov_b_r, show.se = TRUE)
+
+# create word document table
+
+
+
+```
+
+
+## comparison of lmer and robust models
+
+```{r}
+
+# comparison with cov_c
+
+
+
+# compare q-q plots
+
+par(mfrow = c(1,2))
+qqnorm(resid(cov_c), main = "lmer residuals"); qqline(resid(cov_c))
+qqnorm(resid(cov_c_r), main = "rlmer residuals"); qqline(resid(cov_c_r))
+
+# compare random effect residuals
+
+ranef_lmer <- ranef(cov_c)$id[, 1]
+ranef_rlmer <- ranef(cov_c_r)$id[, 1]
+plot(ranef_lmer, ranef_rlmer, xlab = "lmer", ylab = "rlmer")
+abline(0, 1)
+
+```
+
 #### Assumptions 
 
 ```{r competence assumption checking}
@@ -1353,7 +1447,7 @@ contrast(emm, method = list(DID = c(1, -1, -1, 1)))
 library(performance)
 library(see)
 
-check_model(cov_b)
+check_model(cov_c)
 
 # Standardise (Pearson) residuals & fitteds
 res <- resid(cov_c, type = "pearson")
@@ -1373,22 +1467,36 @@ clubSandwich::coef_test(cov_c, vcov = "CR2", cluster = long_data$id)
 ```{r cooks manual, eval=FALSE, include=FALSE}
 
 ## Influence at the cluster level
-infl <- influence(cov_c, group = "id")
-cd   <- cooks.distance(infl)      # length = G clusters
-db   <- dfbetas(infl)  # G x P matrix (clusters x coefficients) 
+infl_c <- influence(cov_c, group = "id") # iteratively refit the model 980 times to identify the influence of each unit j
+
+cd   <- cooks.distance(infl_c)      # extract Cook's D for each unit j
+db   <- dfbetas(infl_c)  # matrix of clusters x individual coefficients (DFBETAS)
 
 ## n = number of clusters (participants)
 G <- length(cd)
 
 ## Manual cutoffs
-cut_dfbetas <- 2 / sqrt(G)
-cut_cookd   <- 4 / G
+cut_dfbetas <- 2 / sqrt(G) # if absolute values of DFBETAS exceed the cutoff value 2/√nₓ
+cut_cookd   <- 4 / G       # or Cook’s D exceeds 4/nₓ
 
 # cut_dfbetas; cut_cookd
 
 ## Flags
-flag_cd_idx      <- which(cd > cut_cookd)
-flag_db_any_idx  <- which(apply(abs(db), 1, function(x) any(x > cut_dfbetas, na.rm = TRUE)))
+flag_cd_idx      <- which(cd > cut_cookd)  # identify how many clusters fall below the cut off
+flag_db_any_idx  <- which(apply(abs(db), 1, function(x) any(x > cut_dfbetas, na.rm = TRUE)))   # identify how many points in the matrix fall below the cut off
+
+# Extract Cook's D values for the 53 flagged clusters
+flag_cd_values <- cd[flag_cd_idx]
+summary(flag_cd_values)
+quantile(flag_cd_values, probs = c(.50, .75, .90, .95, .99))
+
+# Extract DFBETAS
+
+max_dfbetas <- apply(abs(db), 1, max, na.rm = TRUE)
+cut_dfbetas <- 2 / sqrt(length(max_dfbetas))
+below_dfbetas <- max_dfbetas[max_dfbetas > cut_dfbetas]
+summary(below_dfbetas)
+quantile(below_dfbetas, probs = c(.50, .75, .90, .95, .99))
 
 ## Map indices -> actual id labels used inside the model
 id_levels <- levels(getME(cov_c, "flist")$id)
@@ -1396,8 +1504,13 @@ flag_cd_ids     <- id_levels[flag_cd_idx]
 flag_dfbetas_ids<- id_levels[flag_db_any_idx]
 
 length(flag_cd_ids); length(flag_dfbetas_ids)
-flag_cd_ids[1:min(10, length(flag_cd_ids))]           # peek
-flag_dfbetas_ids[1:min(10, length(flag_dfbetas_ids))] # peek
+flag_cd_ids[1:min(10, length(flag_cd_ids))] # look at the top 10          
+flag_dfbetas_ids[1:min(10, length(flag_dfbetas_ids))] 
+
+# are these concerning?
+
+summary(cd)
+summary(apply(abs(db), 1, max, na.rm = TRUE))
 
 ## (Optional) which coefficients are triggering DFBETAS?
 # list cluster indices per coefficient that exceed the cutoff
@@ -1426,6 +1539,7 @@ visreg(cov_c, "support", partial=TRUE)
 visreg(cov_c, "self_ideology", partial=TRUE)
 
 ```
+
 
 ```{r sensitivity check cooks, include=FALSE}
 
@@ -1511,18 +1625,24 @@ infl_i <- influence(cov_i, group = "id")
 cd   <- cooks.distance(infl_i)      # length = G clusters
 db   <- dfbetas(infl_i)  # G x P matrix (clusters x coefficients) 
 
-## n = number of clusters (participants)
-G <- length(cd)
-
-## Manual cutoffs
-cut_dfbetas <- 2 / sqrt(G)
-cut_cookd   <- 4 / G
-
 # cut_dfbetas; cut_cookd
 
 ## Flags
 flag_cd_idx      <- which(cd > cut_cookd)
 flag_db_any_idx  <- which(apply(abs(db), 1, function(x) any(x > cut_dfbetas, na.rm = TRUE)))
+
+# Extract Cook's D 
+flag_cd_values <- cd[flag_cd_idx]
+summary(flag_cd_values)
+quantile(flag_cd_values, probs = c(.50, .75, .90, .95, .99))
+
+# Extract DFBETAS
+
+max_dfbetas <- apply(abs(db), 1, max, na.rm = TRUE)
+cut_dfbetas <- 2 / sqrt(length(max_dfbetas))
+below_dfbetas <- max_dfbetas[max_dfbetas > cut_dfbetas]
+summary(below_dfbetas)
+quantile(below_dfbetas, probs = c(.50, .75, .90, .95, .99))
 
 ## Map indices -> actual id labels used inside the model
 id_levels <- levels(getME(cov_i, "flist")$id)
@@ -1643,18 +1763,25 @@ infl_b <- influence(cov_b, group = "id")
 cd   <- cooks.distance(infl_b)      # length = G clusters
 db   <- dfbetas(infl_b)  # G x P matrix (clusters x coefficients) 
 
-## n = number of clusters (participants)
-G <- length(cd)
-
-## Manual cutoffs
-cut_dfbetas <- 2 / sqrt(G)
-cut_cookd   <- 4 / G
-
 # cut_dfbetas; cut_cookd
 
 ## Flags
 flag_cd_idx      <- which(cd > cut_cookd)
 flag_db_any_idx  <- which(apply(abs(db), 1, function(x) any(x > cut_dfbetas, na.rm = TRUE)))
+
+# Extract Cook's D 
+flag_cd_values <- cd[flag_cd_idx]
+summary(flag_cd_values)
+quantile(flag_cd_values, probs = c(.50, .75, .90, .95, .99))
+
+# Extract DFBETAS
+
+max_dfbetas <- apply(abs(db), 1, max, na.rm = TRUE)
+cut_dfbetas <- 2 / sqrt(length(max_dfbetas))
+below_dfbetas <- max_dfbetas[max_dfbetas > cut_dfbetas]
+summary(below_dfbetas)
+quantile(below_dfbetas, probs = c(.50, .75, .90, .95, .99))
+
 
 ## Map indices -> actual id labels used inside the model
 id_levels <- levels(getME(cov_b, "flist")$id)
@@ -1743,6 +1870,84 @@ int_sens_fdr
 
 ```
 
+## Robust model fit 
+
+```{r}
+
+library(robustlmm)
+
+## COMPETENCE
+
+## Robust mixed model (M-estimation)
+cov_c_r <- robustlmm::rlmer(
+  competence ~ motive*imprint + party + policy + familiar + support + self_ideology +
+    (1 | id),
+  data = long_data)
+
+summary(cov_c_r)
+
+## Wald-style CIs for fixed effects from the robust vcov:
+b  <- fixef(cov_c_r)
+SE <- sqrt(diag(vcov(cov_c_r)))
+ci <- cbind(lower = b - 1.96*SE, upper = b + 1.96*SE)
+round(ci, 3)
+
+## Compare fixed effects from ML vs robust:
+cbind(ML = fixef(cov_c), Robust = fixef(cov_c_r))
+
+# Single-parameter Wald tests (z and p)
+cf <- summary(cov_c_r)$coefficients   # Estimate, Std. Error, etc.
+z  <- cf[, "Estimate"] / cf[, "Std. Error"]
+p  <- 2 * pnorm(abs(z), lower.tail = FALSE)
+
+wald_table <- cbind(cf[, c("Estimate","Std. Error")], z = z, `Pr(>|z|)` = p)
+round(wald_table, 4)
+
+## INTEGRITY
+
+## Robust mixed model (M-estimation)
+cov_i_r <- rlmer(
+  integrity ~ motive*imprint + party + policy + familiar + support + self_ideology +
+    (1 | id),
+  data = long_data)
+
+## decomposed covariates
+
+dcov_i_r <- rlmer(integrity ~ motive*imprint + party + policy_b + policy_w + familiar_b + familiar_w + support_b + support_w + self_ideology + (1|id), data = long_data)
+
+summary(cov_i_r)
+summary(dcov_i_r)
+
+# does decomposing help
+
+car::linearHypothesis(
+  dcov_i_r,
+  c("policy_b = policy_w",
+    "familiar_b = familiar_w",
+    "support_b = support_w"),
+  vcov. = vcov(dcov_i_r),   # robust vcov from rlmer
+  test  = "Chisq"
+)
+
+## Wald-style CIs for fixed effects from the robust vcov:
+b  <- fixef(dcov_i_r)
+SE <- sqrt(diag(vcov(dcov_i_r)))
+ci <- cbind(lower = b - 1.96*SE, upper = b + 1.96*SE)
+round(ci, 3)
+
+## Compare fixed effects from ML vs robust:
+cbind(Robust = fixef(cov_i_r), Decomposed = fixef(dcov_i_r))
+
+# Single-parameter Wald tests (z and p)
+cf <- summary(dcov_i_r)$coefficients   # Estimate, Std. Error, etc.
+z  <- cf[, "Estimate"] / cf[, "Std. Error"]
+p  <- 2 * pnorm(abs(z), lower.tail = FALSE)
+
+wald_table <- cbind(cf[, c("Estimate","Std. Error")], z = z, `Pr(>|z|)` = p)
+round(wald_table, 4)
+
+```
+
 ### Causal mediation
 
 ```{r causal mediation, eval=FALSE}
@@ -1793,6 +1998,181 @@ med.out <- mediate(
 
 med.fit <- lm(competence ~ motive + imprint + party, data = med.dat)
 
+
+```
+
+# Model iterations
+
+```{r}
+
+# which covariate explains the most variation in the model?
+
+int <- lmer(integrity ~ motive*imprint + party + (1|id),
+           data = long_data, REML = FALSE)
+
+cov_i <- lmer(integrity ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
+           data = long_data, REML = FALSE)
+
+# each covariate alone
+
+cov_i_p <- lmer(integrity ~ motive*imprint + party + policy + (1|id),
+           data = long_data, REML = FALSE)
+
+cov_i_f <- lmer(integrity ~ motive*imprint + party + familiar + (1|id), data = long_data, REML = FALSE)
+
+cov_i_s <- lmer(integrity ~ motive*imprint + party + support + (1|id), data = long_data, REML = FALSE)
+
+cov_i_id <- lmer(integrity ~ motive*imprint + party + self_ideology + (1|id), data = long_data, REML = FALSE)
+
+# building nested models
+
+cov_i_min <- lmer(integrity ~ motive*imprint + party + policy + support + (1|id),
+           data = long_data, REML = FALSE)
+
+car::vif(cov_i_min)
+
+# Investigating the effect of support within the conditions
+
+# Is there uneven placement for support with the conditions?
+
+```
+
+# mediation with Lavaan 
+
+Is the positive effect of viewing the digital imprint mediated through it looking more professional?
+
+```{r}
+
+aesthetic <- '
+
+     # define the latent variables
+     
+     l_competence =~ comp + skill + know
+     l_integrity =~ princ + truth + sinc
+     l_benevolence =~ emp + warm + kind
+     
+     # set the direct paths
+     
+     l_competence ~ c1*imprint
+     l_integrity ~ c2*imprint
+     l_benevolence ~ c3*imprint
+     look ~ a*imprint
+     l_competence ~ b1*look
+     l_integrity ~ b2*look
+     l_benevolence ~ b3*look
+     
+     # outcome covariances
+     
+     l_competence ~~ l_integrity
+     l_integrity ~~ l_benevolence
+     l_competence ~~ l_benevolence
+     
+     # set the indirect paths 
+     
+     indirect_comp := c1*b1
+     indirect_int := c2*b2
+     indirect_ben := c3*b2
+     
+     # total effects
+     
+     total_comp := c1 + (a*b1)
+     total_int := c2 + (a*b2)
+     total_ben := c3 + (a*b3)
+
+'
+
+model <- '
+  level: 1
+    # Within (L1) measurement
+    competence_w =~ comp + skill + know
+    integrity_w =~ princ + truth + sinc
+    benevolence_w =~ emp + warm + kind
+    look_w =~ look
+
+    # Within (L1) structural
+    look_w ~ a*imprint
+    competence_w ~ b1*look_w + cprime*imprint
+    integrity_w ~ b2*look_w + cprime*imprint
+    benevolence_w ~ b3*look_w + cprime*imprint
+
+    # Defined (within-level) effects
+    ind_comp   := a*b1
+    ind_int    := a*b2
+    ind_ben    := a*b3
+    total_comp := cprime + ind_comp
+    total_int  := cprime + ind_int
+    total_ben  := cprime + ind_ben
+
+  level: 2
+    
+    competence_b =~ comp + skill + know
+    integrity_b =~ princ + truth + sinc
+    benevolence_b =~ emp + warm + kind
+    look_b =~ look
+'
+
+aes_med <- sem(model, data = long_data, estimator = "MLR", cluster = "id", meanstructure=TRUE, fixed.x=TRUE)
+
+summary(aes_med, fit.measures = TRUE)
+
+```
+
+```{r}
+
+model <- '
+  ########################
+  # Within-person (Level 1)
+  ########################
+  level: 1
+
+    # Measurement (within)
+    competence_w  =~ comp + skill + know
+    integrity_w   =~ princ + truth + sinc
+    benevolence_w =~ emp + warm + kind
+
+    # Structural (within) — observed look, not a single-indicator latent
+    look ~ a*imprint                        # path a (within)
+    competence_w  ~ b1*look + c1*imprint    # mediator b1 and direct c1
+    integrity_w   ~ b2*look + c2*imprint
+    benevolence_w ~ b3*look + c3*imprint
+
+    # Allow residual correlations among the three latent outcomes (within)
+    competence_w  ~~ integrity_w + benevolence_w
+    integrity_w   ~~ benevolence_w
+
+    # Indirect and total effects (within)
+    ind_comp   := a*b1
+    ind_int    := a*b2
+    ind_ben    := a*b3
+    total_comp := c1 + ind_comp
+    total_int  := c2 + ind_int
+    total_ben  := c3 + ind_ben
+
+  #######################
+  # Between-person (Level 2)
+  #######################
+  level: 2
+
+    # Measurement (between)
+    competence_b  =~ comp + skill + know
+    integrity_b   =~ princ + truth + sinc
+    benevolence_b =~ emp + warm + kind
+
+    # Between-level correlations (optional but recommended)
+    competence_b  ~~ integrity_b + benevolence_b
+    integrity_b   ~~ benevolence_b
+'
+
+fit <- sem(
+  model, data = long_data,
+  cluster   = "id",     # <-- your person ID
+  estimator = "MLR",    # robust SEs/tests
+  missing   = "fiml",
+  std.lv    = TRUE
+)
+
+summary(fit, standardized = TRUE, fit.measures = TRUE, ci = TRUE)
+parameterEstimates(fit, standardized = TRUE, ci = TRUE)
 
 ```
 
