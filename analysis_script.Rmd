@@ -1269,13 +1269,15 @@ long_data <- long_data %>%
 
 # covariate models (no decomposition)
 
-cov_c <- lmer(competence ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
+cov_c <- lmer(competence ~ motive*imprint + party + policy + familiar + 
+                support + self_ideology + (1|id), data = long_data, REML = FALSE)
+
+cov_i <- lmer(integrity ~ motive*imprint + party + policy + familiar + 
+                support + self_ideology + (1|id),
            data = long_data, REML = FALSE)
 
-cov_i <- lmer(integrity ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
-           data = long_data, REML = FALSE)
-
-cov_b <- lmer(benevolence ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id),
+cov_b <- lmer(benevolence ~ motive*imprint + party + policy + familiar + 
+                support + self_ideology + (1|id),
            data = long_data, REML = FALSE)
 
 # HC3 robust standard errors adjustments
@@ -1296,6 +1298,275 @@ broom.mixed::tidy(cov_i, effects = "fixed", conf.int = TRUE)
 broom.mixed::tidy(cov_b, effects = "fixed", conf.int = TRUE)
 
 ```
+
+### Assumptions for MLE models
+
+- Functional form (linearity), fitted vs residual
+- Homogeneity of variance, scale location plot
+- Normality of level-1 residuals, Q-Q plot
+- Normality of random effects, Q-Q plot
+- Level-2 leverage points 
+
+```{r}
+
+library(lme4)
+library(ggplot2)
+library(patchwork)
+
+# -------- helper to make a 3-panel diagnostic for an lmer model --------
+diag_lmer <- function(fit, model_title = "Model", save_path = NULL) {
+  # data for plots
+  df <- data.frame(
+    fitted  = fitted(fit),                          # conditional fitted values (incl. RE)
+    sresid  = resid(fit, type = "pearson")          # Pearson residuals (≈ standardized)
+  )
+  df$resid <- resid(fit, type = "response")
+
+  # A) Residuals vs Fitted (functional form)
+  pA <- ggplot(df, aes(fitted, resid)) +
+    geom_point(shape = 16, alpha = 0.6) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 0.4) +
+    geom_hline(yintercept = 0, linetype = 2) +
+    labs(x = "Fitted values (conditional)", y = "Residuals",
+         title = paste(model_title, "Linearity Check (Residuals vs Fitted)")) +
+    theme_bw(base_size = 11)
+
+  # B) Scale–Location (homoscedasticity)
+  pB <- ggplot(df, aes(fitted, sqrt(abs(sresid)))) +
+    geom_point(shape = 16, alpha = 0.6) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 0.4) +
+    labs(x = "Fitted values (conditional)",
+         y = expression(sqrt("|Pearson residuals|")),
+         title = paste(model_title, "Level-1: Homoskedasticity Check (Scale–Location)")) +
+    theme_bw(base_size = 11)
+
+  # C) Normal Q–Q (of Pearson residuals)
+  qq <- qqnorm(df$sresid, plot.it = FALSE)
+  qq_df <- data.frame(theoretical = qq$x, sample = qq$y)
+
+  pC <- ggplot(qq_df, aes(theoretical, sample)) +
+    geom_point(shape = 16, alpha = 0.6) +
+    geom_abline(intercept = 0, slope = 1, linetype = 2) +
+    labs(x = "Theoretical Quantiles", y = "Sample Quantiles",
+         title = paste(model_title, "Level-1: Normality Check (Normal Q–Q)")) +
+    theme_bw(base_size = 11)
+
+  # combine vertically
+  p <- (pA / pB / pC) +
+    plot_annotation(
+      title = paste(model_title, ": Inspecting Mixed-Model Assumptions"),
+      subtitle = deparse(formula(fit)),
+      tag_levels = "A"
+    ) &
+    theme(plot.title = element_text(size = 12),
+          plot.subtitle = element_text(size = 9))
+
+  if (!is.null(save_path)) {
+    ggsave(save_path, plot = p, width = 8.27, height = 11.69, units = "in", dpi = 300)
+  }
+  p
+}
+
+# ---- Example usage ----
+
+diag_lmer(cov_b, model_title = "Model 3: benevolence", save_path = "assumption_plot/benevolence_lmer_diagnostics.png")
+
+```
+
+### Level-2 assumptions (residuals and leverage)
+
+```{r l2 competence}
+
+# Cook's D with influence.ME
+
+infl_c <- influence(cov_c, group = "id")  # cluster-level influence object
+cd   <- cooks.distance(infl_c)             # Cook’s D per cluster (id)
+thr  <- 4/length(cd)                       # heuristic cutoff
+sum(cd > thr) 
+
+cd_df <- data.frame(
+  id = 1:length(cd),
+  cooksD = cd
+)
+
+comp_cook_l2 <- ggplot(cd_df, aes(x = id, y = cooksD)) +
+  geom_col(fill = "black", alpha = 0.7) +
+  geom_hline(yintercept = thr, color = "red3", linetype = "dashed", linewidth = 0.8) +
+  labs(
+    title = "Cook's D by cluster",
+    x = "Cluster index (id)",
+    y = "Cook's distance (red line = 0.004)"
+  ) +
+  theme_bw(base_size = 12)
+
+# Q-Q plot of residuals
+
+# Standardised random intercepts (z_b)
+re <- ranef(cov_c, condVar = TRUE)$id
+postVar <- attr(ranef(cov_c, condVar = TRUE)[[1]], "postVar")
+z_b <- as.numeric(re[[1]] / sqrt(postVar[1, 1, ]))
+
+# Q–Q plot
+comp_qq_l2 <- ggplot(data.frame(z_b = z_b), aes(sample = z_b)) +
+  stat_qq(shape = 16) +
+  stat_qq_line(linetype = 2, alpha = 0.6) +
+  labs(
+    title = "Q–Q Plot of Standardised Level-2 Random Effects",
+    x = "Theoretical Quantiles", y = "Sample Quantiles"
+  ) +
+  theme_bw(base_size = 12)
+
+# Combine the two plots vertically with patchwork
+comp_l2_diagnostics <- (comp_qq_l2 / comp_cook_l2) +
+  plot_annotation(
+    title = "Level-2 Diagnostics for Competence Model",
+    subtitle = "A: Normality of Random Effects   |   B: Cluster Influence (Cook’s D)",
+    tag_levels = "A"   # labels them A, B automatically
+  ) &
+  theme(
+    plot.title = element_text(size = 13, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    plot.tag = element_text(size = 12, face = "bold")
+  )
+
+ggsave(
+  filename = "assumption_plot/competence_L2_diagnostics.png",
+  plot = comp_l2_diagnostics,
+  width = 8.27,    # A4 width in inches
+  height = 9,  # A4 height in inches
+  units = "in",
+  dpi = 300
+)
+
+```
+
+```{r l2 integrity}
+
+infl_i <- influence(cov_i, group = "id")  # cluster-level influence object
+cd   <- cooks.distance(infl_i)             # Cook’s D per cluster (id)
+thr  <- 4/length(cd)                       # heuristic cutoff
+sum(cd > thr) 
+
+cd_df <- data.frame(
+  id = 1:length(cd),
+  cooksD = cd
+)
+
+int_cook_l2 <- ggplot(cd_df, aes(x = id, y = cooksD)) +
+  geom_col(fill = "black", alpha = 0.7) +
+  geom_hline(yintercept = thr, color = "red3", linetype = "dashed", linewidth = 0.8) +
+  labs(
+    title = "Cook's D by cluster",
+    x = "Cluster index (id)",
+    y = "Cook's distance (red line = 0.004)"
+  ) +
+  theme_bw(base_size = 12)
+
+# Q-Q plot of residuals
+
+# Standardised random intercepts (z_b)
+re <- ranef(cov_i, condVar = TRUE)$id
+postVar <- attr(ranef(cov_i, condVar = TRUE)[[1]], "postVar")
+z_b <- as.numeric(re[[1]] / sqrt(postVar[1, 1, ]))
+
+# Q–Q plot
+int_qq_l2 <- ggplot(data.frame(z_b = z_b), aes(sample = z_b)) +
+  stat_qq(shape = 16) +
+  stat_qq_line(linetype = 2, alpha = 0.6) +
+  labs(
+    title = "Q–Q Plot of Standardised Level-2 Random Effects",
+    x = "Theoretical Quantiles", y = "Sample Quantiles"
+  ) +
+  theme_bw(base_size = 12)
+
+# Combine the two plots vertically with patchwork
+int_l2_diagnostics <- (int_qq_l2 / int_cook_l2) +
+  plot_annotation(
+    title = "Level-2 Diagnostics for Integrity Model",
+    subtitle = "A: Normality of Random Effects   |   B: Cluster Influence (Cook’s D)",
+    tag_levels = "A"   # labels them A, B automatically
+  ) &
+  theme(
+    plot.title = element_text(size = 13, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    plot.tag = element_text(size = 12, face = "bold")
+  )
+
+ggsave(
+  filename = "assumption_plot/integrity_L2_diagnostics.png",
+  plot = int_l2_diagnostics,
+  width = 8.27,    # A4 width in inches
+  height = 9,  # A4 height in inches
+  units = "in",
+  dpi = 300
+)
+
+```
+
+```{r}
+
+infl_b <- influence(cov_b, group = "id")  # cluster-level influence object
+cd   <- cooks.distance(infl_b)             # Cook’s D per cluster (id)
+thr  <- 4/length(cd)                       # heuristic cutoff
+sum(cd > thr) 
+
+cd_df <- data.frame(
+  id = 1:length(cd),
+  cooksD = cd
+)
+
+ben_cook_l2 <- ggplot(cd_df, aes(x = id, y = cooksD)) +
+  geom_col(fill = "black", alpha = 0.7) +
+  geom_hline(yintercept = thr, color = "red3", linetype = "dashed", linewidth = 0.8) +
+  labs(
+    title = "Cook's D by cluster",
+    x = "Cluster index (id)",
+    y = "Cook's distance (red line = 0.004)"
+  ) +
+  theme_bw(base_size = 12)
+
+# Q-Q plot of residuals
+
+# Standardised random intercepts (z_b)
+re <- ranef(cov_b, condVar = TRUE)$id
+postVar <- attr(ranef(cov_b, condVar = TRUE)[[1]], "postVar")
+z_b <- as.numeric(re[[1]] / sqrt(postVar[1, 1, ]))
+
+# Q–Q plot
+ben_qq_l2 <- ggplot(data.frame(z_b = z_b), aes(sample = z_b)) +
+  stat_qq(shape = 16) +
+  stat_qq_line(linetype = 2, alpha = 0.6) +
+  labs(
+    title = "Q–Q Plot of Standardised Level-2 Random Effects",
+    x = "Theoretical Quantiles", y = "Sample Quantiles"
+  ) +
+  theme_bw(base_size = 12)
+
+# Combine the two plots vertically with patchwork
+ben_l2_diagnostics <- (ben_qq_l2 / ben_cook_l2) +
+  plot_annotation(
+    title = "Level-2 Diagnostics for Integrity Model",
+    subtitle = "A: Normality of Random Effects   |   B: Cluster Influence (Cook’s D)",
+    tag_levels = "A"   # labels them A, B automatically
+  ) &
+  theme(
+    plot.title = element_text(size = 13, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    plot.tag = element_text(size = 12, face = "bold")
+  )
+
+ggsave(
+  filename = "assumption_plot/benev_L2_diagnostics.png",
+  plot = ben_l2_diagnostics,
+  width = 8.27,    # A4 width in inches
+  height = 9,  # A4 height in inches
+  units = "in",
+  dpi = 300
+)
+
+
+```
+
 
 ### De-composed covariates
 
@@ -1349,10 +1620,10 @@ dcov_b <- lmer(benevolence ~ motive*imprint + party + policy_b + policy_w + + fa
 
 ```{r visualise interactions}
 
-# visualise
+# visualise for lmer
 
 # Get EMMs + 95% CI for each cell of the 2x2
-emm_df <- confint(emmeans(cov_i, ~ motive * imprint)) %>% as.data.frame()
+emm_df <- confint(emmeans(cov_i_r, ~ motive * imprint)) %>% as.data.frame()
 
 ggplot(emm_df, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
   geom_line(position = position_dodge(width = 0.15)) +
@@ -1370,6 +1641,32 @@ pairs(emmeans(cov_i, ~ imprint|motive))
 emm <- emmeans(cov_i, ~ imprint*motive)
 contrast(emm, method = list(DID = c(1, -1, -1, 1)))
 
+# visualise for rlmm
+
+# Make sure 0/1 predictors are factors for 2x2 cells
+long_data <- long_data %>%
+  mutate(
+    motive  = factor(motive,  levels = c(0,1), labels = c("0","1")),
+    imprint = factor(imprint, levels = c(0,1), labels = c("0","1"))
+  )
+
+# Use asymptotic (z) inference – recommended for robust fits
+emm_options(lmer.df = "asymptotic")  # df = Inf, Wald z tests & CIs
+
+# Estimated marginal means for the 2x2 cells + 95% CIs
+emm <- emmeans(cov_i_r, ~ motive * imprint)       # marginal over random effects (re.form=NA)
+emm_df <- as.data.frame(confint(emm))             # lower.CL / upper.CL columns
+
+# Plot
+int_plot <- ggplot(emm_df, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
+  geom_line(position = position_dodge(width = 0.15)) +
+  geom_point(position = position_dodge(width = 0.15)) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL),
+                width = 0.08, position = position_dodge(width = 0.15)) +
+  labs(x = "Motive", y = "Estimated mean integrity", color = "Imprint") +
+  theme_minimal(base_size = 12)
+
+#ggsave()
 
 ```
 
@@ -1410,9 +1707,107 @@ cov_b_r <- robustlmm::rlmer(
 
 sjPlot::tab_model(cov_b_r, show.se = TRUE)
 
+```
+
+```{r}
+
 # create word document table
 
+# ---- 1) Helper to tidy an rlmer model ----
+tidy_rlmer <- function(fit, model_name) {
+  sm <- summary(fit)
+  co <- as.data.frame(sm$coefficients)
+  co$term <- rownames(co)
+  rownames(co) <- NULL
+  
+  # robustlmm names: "Estimate", "Std. Error", "t value" (Wald-type)
+  # compute Wald (z) p-values and 95% Wald CIs
+  co <- co %>%
+    transmute(
+      model     = model_name,
+      term,
+      estimate  = Estimate,
+      std_error = `Std. Error`,
+      z_value   = `t value`,
+      p_value   = 2 * pnorm(abs(`t value`), lower.tail = FALSE),
+      conf_low  = Estimate - 1.96 * `Std. Error`,
+      conf_high = Estimate + 1.96 * `Std. Error`
+    ) %>%
+    # rounding & pretty p
+    mutate(
+      across(c(estimate, std_error, conf_low, conf_high), ~ round(.x, 2)),
+      p_value_raw = p_value,
+      p_value = ifelse(p_value < .001, "< .001", sprintf("%.3f", p_value)),
+      z_value = round(z_value, 2)
+    ) %>%
+    # reorder columns
+    dplyr::select(model, term, estimate, std_error, conf_low, conf_high, z_value, p_value)
+  
+  co
+}
 
+# ---- 2) Fit models (yours) ----
+# (Assumes long_data already exists and models already fitted as in your message.)
+# If not, run your rlmer() calls first, then continue.
+
+# ---- 3) Tidy all models and bind together ----
+all_tables <- bind_rows(
+  tidy_rlmer(comp_r,  "Competence (base)"),
+  tidy_rlmer(cov_c_r, "Competence (covariate-adjusted)"),
+  tidy_rlmer(int_r,   "Integrity (base)"),
+  tidy_rlmer(cov_i_r, "Integrity (covariate-adjusted)"),
+  tidy_rlmer(ben_r,   "Benevolence (base)"),
+  tidy_rlmer(cov_b_r, "Benevolence (covariate-adjusted)")
+)
+
+# Optional: nicer term labels (edit to your taste)
+pretty_terms <- c(
+  "(Intercept)" = "(Intercept)",
+  "motive"      = "Motive (1 vs 0)",
+  "imprint"     = "Imprint (1 vs 0)",
+  "party"       = "Party (1 vs 0)",
+  "policy"      = "Policy alignment",
+  "familiar"    = "Prior knowledge (1 vs 0)",
+  "support"     = "Pre-existing support",
+  "self_ideology" = "Ideology (L→R)",
+  "motive:imprint" = "Motive × Imprint"
+)
+
+all_tables <- all_tables %>%
+  mutate(term = recode(term, !!!pretty_terms, .default = term))
+
+# ---- 4) Split into a list of per-model tables ----
+by_model <- group_split(all_tables, model)
+model_names <- unique(all_tables$model)
+
+# ---- 5) Build a Word document with one table per model ----
+doc <- read_docx()
+
+for (i in seq_along(by_model)) {
+  df <- by_model[[i]] %>%
+    dplyr::select(term, estimate, std_error, conf_low, conf_high, z_value, p_value)
+  
+  ft <- flextable(df)
+  ft <- autofit(ft)
+  ft <- set_header_labels(
+    ft,
+    term      = "Term",
+    estimate  = "Estimate",
+    std_error = "SE",
+    conf_low  = "95% CI (low)",
+    conf_high = "95% CI (high)",
+    z_value   = "z",
+    p_value   = "p"
+  )
+  ft <- align(ft, j = c("estimate","std_error","conf_low","conf_high","z_value","p_value"), align = "right", part = "all")
+  
+  doc <- doc %>%
+    body_add_par(model_names[i], style = "heading 2") %>%
+    body_add_flextable(ft) %>%
+    body_add_par("")  # spacer
+}
+
+print(doc, target = "robust_mixed_models_tables.docx")
 
 ```
 
