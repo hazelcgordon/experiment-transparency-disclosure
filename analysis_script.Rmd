@@ -834,81 +834,139 @@ It was intended that the disclosure condition would not affect the perception th
 
 ```{r, echo=FALSE}
 
-# legal (manipulation check)
-
-long_data <- long_data %>%
-  mutate(
-    compliant = case_when(
-      compliant == "Yes"      ~ "1",
-      compliant == "No" ~ "0",
-      TRUE ~ NA_character_
-    ),
-   compliant = factor(compliant, levels = c("0", "1"))
-  )
-
-# legal (manipulation check)
-
-long_data <- long_data %>%
-  mutate(
-    use = case_when(
-      use == "Yes"      ~ "1",
-      use == "No" ~ "0",
-      TRUE ~ NA_character_
-    ),
-   use = factor(use, levels = c("0", "1"))
-  )
-
-long_data <- long_data %>%
-  mean_score(vars = c("proact", "intent", "open"), new_name = "intention") 
-
 # did the motive condition increase perceptions of intentionality?
 
-man_intent_sim <- lm(intention ~ motive + imprint + party,
+man_intent_sim <- lm(intention ~ motive + imprint,
            data = long_data)
 
-man_intent_int <- lm(intention ~ motive*imprint + party,
+man_intent_int <- lm(intention ~ motive*imprint,
+           data = long_data)
+
+anova(man_intent_sim, man_intent_int)
+
+man_intent_support <- lm(intention ~ motive + imprint + support,
            data = long_data)
 
 # did the imprint increase perceptions of well designed ads?
 
-man_look_sim <- lm(look ~ imprint + motive + party + support,
+look <- lm(look ~ imprint, data = long_data)
+
+man_look_sim <- lm(look ~ imprint + motive,
            data = long_data)
 
-man_look_int <- lm(look ~ imprint*motive + party,
+man_look_int <- lm(look ~ imprint*motive,
            data = long_data)
+
+anova(man_look_sim, man_look_int)
+
+man_look_support <- lm(look ~ imprint + motive + support,
+           data = long_data)
+
+# is there any evidence the control text actively reduced perceptions of professionalism?
+
+ggplot(long_data, aes(x = look)) +
+  geom_histogram(bins = 7, fill = "grey70", color = "black") +
+  facet_wrap(~ imprint) +
+  labs(
+    x = "Look rating (1–7)",
+    y = "Count",
+    title = "Distribution of Look ratings by Imprint condition"
+  ) +
+  theme_minimal(base_size = 14)
 
 # compliance with the law
 
-man_compliant_sim <- glm(compliant ~ motive + imprint + party, data = long_data,
+compliant_null_model <- glm(compliant ~ 1, data = long_data,
              family = binomial())
 
-man_compliant_int <- glm(compliant ~ motive*imprint + party, data = long_data,
+man_compliant_sim <- glm(compliant ~ motive + imprint, data = long_data,
              family = binomial())
+
+man_compliant_int <- glm(compliant ~ motive*imprint, data = long_data,
+             family = binomial())
+
+# Compare models
+anova(compliant_null_model, man_compliant_sim, test = "Chisq")
+anova(man_complaint_sim, man_complaint_int, test = "Chisq")
+
 
 # information availability
 
-man_use_sim <- glm(use ~ motive + imprint + party, data = long_data,
+# Fit null model
+use_null_model <- glm(use ~ 1, data = long_data, family = binomial())
+
+man_use_sim <- glm(use ~ motive + imprint, data = long_data,
              family = binomial())
 
-man_use_int <- glm(use ~ motive*imprint + party, data = long_data,
+man_use_int <- glm(use ~ motive*imprint, data = long_data,
              family = binomial())
 
-print("do interactions significantly worsen model fit (thus making predictions less reliable)?")
+man_use_support <- glm(use ~ motive + imprint + support, data = long_data,
+             family = binomial())
 
-AIC(man_intent_sim, man_intent_int, man_look_sim, man_look_int, man_compliant_sim, man_compliant_int, man_use_sim, man_use_int)
+# Compare models
+anova(use_null_model, man_use_sim, test = "Chisq")
+anova(man_use_sim, man_use_int, test = "Chisq")
 
-# model fit for intent and use are improved by the addition of an interaction effect
+# odds ratio
 
-print("check with LRT to see if interaction term meaningful improved model")
+exp(coef(man_use_sim))
 
-anova(man_intent_sim, man_intent_int)
-anova(man_look_sim, man_look_int)
-anova(man_compliant_sim, man_compliant_int)
-anova(man_use_sim, man_use_int)
+# baseline (motive=0, imprint=0)
+plogis(coef(man_use_sim)[1])
 
-print("LRT do not support interaction for manipulation checks")
+# motive=1
+plogis(coef(man_use_sim)[1] + coef(man_use_sim)["motive1"])
+
+# imprint=1
+plogis(coef(man_use_sim)[1] + coef(man_use_sim)["imprint1"])
+
+# motive=1, imprint=1
+plogis(sum(coef(man_use_sim)))
 
 ```
+
+# plotting the interaction term for info availability
+
+```{r}
+
+# intentionality
+
+emm <- emmeans(man_look_int, ~ motive * imprint)
+plot_data <- as.data.frame(emm)
+
+ggplot(plot_data, aes(x = motive, y = emmean, color = imprint, group = imprint)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.05) +
+  labs(
+    x = "Motive condition",
+    y = "Predicted professionalism (model-estimated mean)",
+    color = "Imprint condition"
+  ) +
+  theme_minimal(base_size = 14)
+
+# info availability
+
+emm <- emmeans::emmeans(man_use_int, ~ motive * imprint, type = "response")
+emm
+
+plot_data <- as.data.frame(emm)
+
+ggplot(plot_data, aes(x = motive, y = prob, color = imprint, group = imprint)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.05) +
+  labs(
+    x = "Motive condition",
+    y = "Predicted probability of use",
+    color = "Imprint condition"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+```
+
 
 ```{r manipulation summaries, echo=FALSE}
 
@@ -1081,7 +1139,7 @@ gt(tab) %>%
 
 # ambiguity around the professionalism 
 
-terms <- c("motive1","imprint1","party1") 
+terms <- c("motive1","imprint1") 
 
 look_fdr <- tidy(man_look_sim) |>
   dplyr::filter(term %in% terms) |>
@@ -1618,28 +1676,9 @@ dcov_b <- lmer(benevolence ~ motive*imprint + party + policy_b + policy_w + + fa
 
 ```
 
+### Plotting interaction effects
+
 ```{r visualise interactions}
-
-# visualise for lmer
-
-# Get EMMs + 95% CI for each cell of the 2x2
-emm_df <- confint(emmeans(cov_i_r, ~ motive * imprint)) %>% as.data.frame()
-
-ggplot(emm_df, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
-  geom_line(position = position_dodge(width = 0.15)) +
-  geom_point(position = position_dodge(width = 0.15)) +
-  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL),
-                width = 0.08, position = position_dodge(width = 0.15)) +
-  labs(x = "Motive", y = "Estimated mean integrity", color = "Imprint") +
-  theme_minimal(base_size = 12) 
-
-# Simple effects of motive at each level of imprint
-pairs(emmeans(cov_i, ~ imprint|motive))
-
-# DID contrast (motive effect difference across imprint)
-# Cell order must match factor level order: (motive1,imprint1), (motive2,imprint1), (motive1,imprint2), (motive2,imprint2)
-emm <- emmeans(cov_i, ~ imprint*motive)
-contrast(emm, method = list(DID = c(1, -1, -1, 1)))
 
 # visualise for rlmm
 
@@ -1654,19 +1693,37 @@ long_data <- long_data %>%
 emm_options(lmer.df = "asymptotic")  # df = Inf, Wald z tests & CIs
 
 # Estimated marginal means for the 2x2 cells + 95% CIs
-emm <- emmeans(cov_i_r, ~ motive * imprint)       # marginal over random effects (re.form=NA)
-emm_df <- as.data.frame(confint(emm))             # lower.CL / upper.CL columns
+emm_int <- emmeans(cov_i_r, ~ motive * imprint)       # marginal over random effects (re.form=NA)
+integrity_plot <- as.data.frame(confint(emm_int))             # lower.CL / upper.CL columns
 
 # Plot
-int_plot <- ggplot(emm_df, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
+int_plot <- ggplot(integrity_plot, aes(x = motive, y = emmean, group = imprint, color = imprint)) +
   geom_line(position = position_dodge(width = 0.15)) +
   geom_point(position = position_dodge(width = 0.15)) +
   geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL),
                 width = 0.08, position = position_dodge(width = 0.15)) +
-  labs(x = "Motive", y = "Estimated mean integrity", color = "Imprint") +
-  theme_minimal(base_size = 12)
+  labs(x = "Intentionality", y = "Estimated mean integrity", color = "Disclosure") +
+  scale_color_discrete(labels = c("Control text", "Digital imprint")) +
+  scale_x_discrete(labels = c("0" = "Bare-minumum compliance", "1" = "Proactive over-compliance")) +
+  ylim(6, 8) +
+  theme_minimal(base_size = 12) 
+
+int_plot
 
 #ggsave()
+
+```
+
+
+```{r, eval=FALSE}
+
+# Simple effects of motive at each level of imprint
+pairs(emmeans(cov_i, ~ imprint|motive))
+
+# DID contrast (motive effect difference across imprint)
+# Cell order must match factor level order: (motive1,imprint1), (motive2,imprint1), (motive1,imprint2), (motive2,imprint2)
+emm <- emmeans(cov_i, ~ imprint*motive)
+contrast(emm, method = list(DID = c(1, -1, -1, 1)))
 
 ```
 
@@ -1680,7 +1737,7 @@ comp_r <- robustlmm::rlmer(
   competence ~ motive*imprint + party + (1 | id), data = long_data)
 
 cov_c_r <- robustlmm::rlmer(
-  competence ~ motive*imprint + party + policy + familiar + support + self_ideology +
+  competence ~ motive*imprint + party + policy + familiar + support + self_ideology + 
     (1 | id),
   data = long_data)
 
@@ -1705,9 +1762,156 @@ cov_b_r <- robustlmm::rlmer(
 
 # table
 
-sjPlot::tab_model(cov_b_r, show.se = TRUE)
+sjPlot::tab_model(cov_i_r, show.se = TRUE)
 
 ```
+
+### Post-hoc power
+
+```{r}
+
+posthoc_power_rlmer <- function(model, term, alpha = 0.05) {
+  coefs <- summary(model)$coefficients
+  est <- coefs[term, "Estimate"]
+  se  <- coefs[term, "Std. Error"]
+
+  z_crit <- qnorm(1 - alpha / 2)               # critical z-value
+  z_obs  <- abs(est / se)                      # observed test statistic
+
+  power <- 1 - pnorm(z_crit - z_obs)           # one-tailed, multiply by 2 for symmetry
+  power
+}
+
+# Example:
+posthoc_power_rlmer(cov_i_r, "motive1:imprint1")
+
+library(simr)
+powerSim(cov_b, test = fixed("motive1:imprint1", method = "z"))
+
+```
+
+
+### Cohen's D
+
+```{r}
+
+# Step 1: Get fixed effect estimates
+fe_competence <- fixef(cov_c_r)
+
+# Step 2: Get standard errors from model summary
+se_competence <- summary(cov_c_r)$coefficients[, "Std. Error"]
+
+# Step 3: Get total SD (residual + random effects)
+varcomps <- as.data.frame(VarCorr(cov_c_r))
+sd_total <- sqrt(sum(varcomps$vcov))
+
+# Step 4: Define predictors of interest
+selected_effects <- c("motive1", "imprint1", "motive1:imprint1")
+predictor_labels <- c(
+  "Intentionality (1 vs 0)",
+  "Disclosure (1 vs 0)",
+  "Intentionality * Disclosure"
+)
+
+# Step 5: Calculate Cohen's d and 95% CI
+d_values <- fe_competence[selected_effects] / sd_total
+se_d_values <- se_competence[selected_effects] / sd_total
+ci_lower <- d_values - 1.96 * se_d_values
+ci_upper <- d_values + 1.96 * se_d_values
+
+# Step 6: Build the data frame
+effect_df <- data.frame(
+  Predictor = predictor_labels,
+  `Cohen's d` = round(d_values, 3),
+  `95% CI` = paste0("[", round(ci_lower, 3), ", ", round(ci_upper, 3), "]")
+)
+
+# Step 7: Create the table
+kable(effect_df, format = "html", caption = "Cohen's d and 95% CI for Fixed Effects") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+
+```
+
+### SESOI
+
+```{r}
+
+tost_from_mixed_model <- function(model, term, sesoi_d = 0.1, alpha = 0.05) {
+  # Extract total SD from all variance components (random + residual)
+  vc <- as.data.frame(VarCorr(model))
+  sd_total <- sqrt(sum(vc$vcov, na.rm = TRUE))
+
+  # Coefficients table
+  sm <- coef(summary(model))
+  if (!term %in% rownames(sm)) stop("Term '", term, "' not found in model coefficients.")
+
+  est <- sm[term, "Estimate"]
+  se  <- sm[term, "Std. Error"]
+
+  # Degrees of freedom:
+  # - lmerTest models provide 'df' per coefficient.
+  # - lme4 (no lmerTest) and robustlmm::rlmer use asymptotic (z); use Inf.
+  df <- if ("df" %in% colnames(sm)) sm[term, "df"] else Inf
+
+  # Convert to Cohen's d scale using total SD
+  d    <- est / sd_total
+  se_d <- se  / sd_total
+
+  # TOST statistics for ±SESOI
+  t_lower <- (d - (-sesoi_d)) / se_d  # H0: d <= -SESOI  vs H1: d > -SESOI
+  t_upper <- (d -  sesoi_d ) / se_d   # H0: d >=  SESOI  vs H1: d <  SESOI
+
+  # p-values (pt with df=Inf reduces to normal cdf)
+  p_lower <- pt(t_lower, df = df, lower.tail = FALSE)
+  p_upper <- pt(t_upper, df = df, lower.tail = TRUE)
+
+  # 90% CI for d (two one-sided tests equivalence uses 100*(1-2*alpha)% CI)
+  t_crit <- qt(1 - alpha, df = df)  # alpha=0.05 -> 90% CI -> use qt(0.95)
+  ci_lower <- d - t_crit * se_d
+  ci_upper <- d + t_crit * se_d
+
+  structure(list(
+    d = as.numeric(d),
+    se_d = as.numeric(se_d),
+    df = as.numeric(df),
+    t_lower = as.numeric(t_lower),
+    t_upper = as.numeric(t_upper),
+    ci_90 = c(ci_lower, ci_upper),
+    p_lower = as.numeric(p_lower),
+    p_upper = as.numeric(p_upper),
+    equivalent = (p_lower < alpha & p_upper < alpha),
+    sesoi_d = sesoi_d,
+    term = term
+  ), class = "tost_d_result")
+}
+
+print.tost_d_result <- function(x, ...) {
+  cat("TOST for Cohen's d (SESOI =", x$sesoi_d, "):\n")
+  cat(sprintf("  term             : %s\n", x$term))
+  cat(sprintf("  d estimate       : %.3f\n", x$d))
+  cat(sprintf("  90%% CI for d     : [%.3f, %.3f]\n", x$ci_90[1], x$ci_90[2]))
+  cat(sprintf("  Lower bound test : t(%s) = %.2f, p = %.4f\n",
+              if (is.infinite(x$df)) "Inf" else sprintf("%.1f", x$df),
+              x$t_lower, x$p_lower))
+  cat(sprintf("  Upper bound test : t(%s) = %.2f, p = %.4f\n",
+              if (is.infinite(x$df)) "Inf" else sprintf("%.1f", x$df),
+              x$t_upper, x$p_upper))
+  cat(sprintf("  Equivalence      : %s\n",
+              ifelse(x$equivalent, "EQUIVALENT (within SESOI)", "NOT EQUIVALENT")))
+}
+
+# rlmer model
+tost_from_mixed_model(model = cov_c_r, term = "imprint1", sesoi_d = 0.1)
+
+
+
+# interaction terms
+
+tost_from_mixed_model(model = cov_b_r, term = "motive1:imprint1", sesoi_d = 0.1)
+
+```
+
+
 
 ```{r}
 
@@ -1746,11 +1950,7 @@ tidy_rlmer <- function(fit, model_name) {
   co
 }
 
-# ---- 2) Fit models (yours) ----
-# (Assumes long_data already exists and models already fitted as in your message.)
-# If not, run your rlmer() calls first, then continue.
-
-# ---- 3) Tidy all models and bind together ----
+# ---- Tidy all models and bind together ----
 all_tables <- bind_rows(
   tidy_rlmer(comp_r,  "Competence (base)"),
   tidy_rlmer(cov_c_r, "Competence (covariate-adjusted)"),
@@ -2431,6 +2631,26 @@ car::vif(cov_i_min)
 # Is there uneven placement for support with the conditions?
 
 ```
+
+# Sensitivity subset analysis for information availability
+
+```{r}
+
+# filter the 'use = 0' observations from dataset
+
+use_subset <- long_data %>%
+  filter(use == 1)
+
+# covariate models (no decomposition)
+
+cov_c_sens <- lmer(competence ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id), data = use_subset, REML = FALSE)
+
+cov_i_sens <- lmer(integrity ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id), data = use_subset, REML = FALSE)
+
+cov_b_sens <- lmer(benevolence ~ motive*imprint + party + policy + familiar + support + self_ideology + (1|id), data = use_subset, REML = FALSE)
+
+```
+
 
 # mediation with Lavaan 
 
