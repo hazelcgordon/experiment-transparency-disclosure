@@ -1,0 +1,216 @@
+---
+title: "Mediation (pre-registered analysis for Appendix C)"
+author: "Hazel C Gordon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lme4)
+library(mediation)
+
+```
+
+Each model will estimate:
+•	ACME: Average Causal Mediation Effect (indirect effect).
+•	ADE: Average Direct Effect.
+•	Total effect: Combined direct and indirect effect.
+
+```{r}
+
+# Identify which party received voluntary intentionality
+data <- data %>%
+  mutate(
+    voluntary_condition = case_when(
+      str_detect(trial1_label, "[AS]_W") ~
+        str_extract(trial1_label, "[AS]_W"),
+      str_detect(trial2_label, "[AS]_W") ~
+        str_extract(trial2_label, "[AS]_W"),
+      TRUE ~ NA_character_
+    ),
+
+    voluntary_party = case_when(
+      voluntary_condition == "A_W" ~ "a",
+      voluntary_condition == "S_W" ~ "s",
+      TRUE ~ NA_character_
+    ),
+
+    vote_party = case_when(
+      vote == "The Alliance Party of Northern Ireland" ~ "a",
+      vote == "The Social Democratic Party (SDP)" ~ "s",
+      TRUE ~ NA_character_
+    ),
+
+    # 1 = participant voted for the voluntary party
+    # 0 = participant voted for the forced party
+    congruence = case_when(
+      is.na(voluntary_party) | is.na(vote_party) ~ NA_integer_,
+      voluntary_party == vote_party ~ 1L,
+      TRUE ~ 0L
+    )
+  )
+
+# Check congruence
+table(data$congruence, useNA = "ifany")
+table(data$voluntary_condition,
+      data$vote,
+      data$congruence,
+      useNA = "ifany")
+
+
+# Reshape: one observation per party, per participant
+
+mediation_long <- data %>%
+  dplyr::select(
+    id, voluntary_party, vote_party,
+    matches("^[as]_(skill|comp|know|truth|sinc|princ|warm|kind|emp)$")
+  ) %>%
+  pivot_longer(
+    cols = matches("^[as]_"),
+    names_to = c("party", "item"),
+    names_pattern = "^([as])_(.*)$",
+    values_to = "score"
+  ) %>%
+  mutate(score = as.numeric(score)) %>%
+  pivot_wider(
+    names_from = item,
+    values_from = score
+  ) %>%
+  mutate(
+    # 1 = voluntary; 0 = forced
+    intentionality = as.integer(party == voluntary_party),
+
+    # 1 = party chosen; 0 = not chosen
+    chosen = as.integer(party == vote_party),
+
+    # Three trustworthiness composites
+    competence = rowMeans(
+      pick(skill, comp, know), na.rm = FALSE
+    ),
+    integrity = rowMeans(
+      pick(truth, sinc, princ), na.rm = FALSE
+    ),
+    benevolence = rowMeans(
+      pick(warm, kind, emp), na.rm = FALSE
+    ),
+
+    party = factor(party, levels = c("a", "s"))
+  ) %>%
+  filter(
+    if_all(
+      c(id, party, intentionality, chosen,
+        competence, integrity, benevolence),
+      ~ !is.na(.)
+    )
+  ) %>%
+  group_by(id) %>%
+  filter(n() == 2, n_distinct(party) == 2) %>%
+  ungroup()
+
+# Check the resulting dataset
+n_distinct(mediation_long$id)
+nrow(mediation_long)
+
+table(mediation_long$intentionality,
+      mediation_long$chosen)
+
+```
+
+# Mediation analysis
+
+```{r}
+
+# Function to run a separate mediation analysis
+
+run_mediation <- function(mediator_name) {
+
+  # Mediator model
+  model_m <- lme4::lmer(
+    as.formula(
+      paste0(
+        mediator_name,
+        " ~ intentionality + party + (1 | id)"
+      )
+    ),
+    data = mediation_long,
+    REML = FALSE
+  )
+
+  # Outcome model: ordinary logistic regression
+  model_y <- glm(
+    as.formula(
+      paste0(
+        "chosen ~ intentionality + ",
+        mediator_name,
+        " + party"
+      )
+    ),
+    data = mediation_long,
+    family = binomial(link = "logit")
+  )
+
+  # Mediation analysis
+  med <- mediation::mediate(
+    model.m = model_m,
+    model.y = model_y,
+    treat = "intentionality",
+    mediator = mediator_name,
+    sims = 2000,
+    boot = FALSE
+  )
+
+  list(
+    mediator_model = model_m,
+    outcome_model = model_y,
+    mediation = med
+  )
+}
+
+# sort any package conflicts between lmer and lme4 
+
+# Detach lmerTest if it is currently loaded
+if ("package:lmerTest" %in% search()) {
+  detach("package:lmerTest", unload = TRUE)
+}
+
+# Load lme4
+library(lme4)
+
+# Check which function is being used (should be lme4 only)
+find("lmer")
+
+# Reproducible simulations
+set.seed(123)
+
+# H4a: Competence
+H4a <- run_mediation("competence")
+
+# H4b: Integrity
+H4b <- run_mediation("integrity")
+
+# H4c: Benevolence
+H4c <- run_mediation("benevolence")
+
+```
+
+Extract models
+
+```{r}
+
+# H4a
+summary(H4a$mediation)
+
+# H4b
+summary(H4b$mediation)
+
+# H4c
+summary(H4c$mediation)
+
+```
+
+
